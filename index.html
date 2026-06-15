@@ -34,6 +34,7 @@
     const EMAILJS_TEMPLATE_ID = "template_itgqkjh";
     const EMAILJS_PUBLIC_KEY  = "aUk62Y6jyfXBt4Qxw";
     const OWNER_EMAIL         = "yukgatatsu.tasutasu@gmail.com";
+    const SITE_URL            = "https://yukatatsu.github.io/myhomebooking";
     // =============================================
 
     const app      = initializeApp(firebaseConfig);
@@ -309,7 +310,8 @@
             type:        isDayVisit ? "日帰り訪問" : `${data.nights}泊${data.nights+1}日の宿泊`,
             guests:      guests,
             notes:       notes || "なし",
-            booking_id:  newRef.key
+            booking_id:  newRef.key,
+            cancel_link: `${SITE_URL}/mybooking.html?id=${newRef.key}`
           }, EMAILJS_PUBLIC_KEY);
           emailOk = true;
         } catch (mailErr) {

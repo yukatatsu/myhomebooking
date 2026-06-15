@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>予約確認・変更・キャンセル</title>
+
+  <!-- EmailJS -->
+  <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+
+  <script type="module">
+    import { initializeApp }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getDatabase, ref, get, update }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+    // =============================================
+    // ★ 設定（index.html と同じ値を入れてください）
+    // =============================================
+    const firebaseConfig = {
+      apiKey: "AIzaSyBp7jWNAvdT20k-q_MyzaT4MDKFMqdsj6M",
+      authDomain: "mybookingsystem-6882c.firebaseapp.com",
+      databaseURL: "https://mybookingsystem-6882c-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "mybookingsystem-6882c",
+      storageBucket: "mybookingsystem-6882c.firebasestorage.app",
+      messagingSenderId: "565510902581",
+      appId: "1:565510902581:web:e5a9a238028a1b0dc7727c"
+    };
+
+    const EMAILJS_SERVICE_ID       = "service_0e0jd8v";
+    const EMAILJS_PUBLIC_KEY       = "aUk62Y6jyfXBt4Qxw";
+    // 通知用テンプレートID（setup.md の「通知テンプレート」を作成したら入れてください）
+    const EMAILJS_NOTIFY_TEMPLATE  = "template_8rt3ov1"; // ← 変更してください
+    const OWNER_EMAIL              = "yukgatatsu.tasutasu@gmail.com";
+    const SITE_URL                 = "https://yukatatsu.github.io/myhomebooking";
+    // =============================================
+
+    const app = initializeApp(firebaseConfig);
+    const db  = getDatabase(app);
+
+    // ---- 状態 ----
+    let booking       = null;  // 現在の予約データ
+    let bookingKey    = null;  // Firebase キー
+    let allBookings   = [];    // 他の予約（カレンダー表示用）
+    let modifyMode    = false; // 日程変更モード
+    let selectStart   = null;
+    let selectEnd     = null;
+    let hoveredDate   = null;
+
+    const MONTHS  = [
+      {year:2026,month:8},{year:2026,month:9},{year:2026,month:10},
+      {year:2026,month:11},{year:2026,month:12},{year:2027,month:1},{year:2027,month:2}
+    ];
+    const JP_WD = ["日","月","火","水","木","金","土"];
+    const JP_MO = ["1月","2月","3月","4月","5月","6月","7月","8月","9月","10月","11月","12月"];
+
+    // ---- ユーティリティ ----
+    function toDateStr(y, m, d) {
+      return `${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+    }
+    function addDays(dateStr, n) {
+      const d = new Date(dateStr + "T00:00:00");
+      d.setDate(d.getDate() + n);
+      return d.toISOString().slice(0,10);
+    }
+    function formatJP(str) {
+      if (!str) return "";
+      const [y,m,d] = str.split("-");
+      return `${y}年${parseInt(m)}月${parseInt(d)}日`;
+    }
+    function calcNights(s, e) {
+      return Math.round((new Date(e) - new Date(s)) / 86400000);
+    }
+
+    // ---- Firebase: 全予約を取得 ----
+    async function loadAllBookings() {
+      const snap = await get(ref(db, "bookings"));
+      allBookings = [];
+      if (!snap.exists()) return;
+      snap.forEach((child) => {
+        const d = child.val();
+        if (d.status !== "cancelled") {
+          allBookings.push({ key: child.key, ...d });
+        }
+      });
+    }
+
+    // ---- 特定予約の読み込み ----
+    async function loadBooking(key) {
+      const snap = await get(ref(db, `bookings/${key}`));
+      if (!snap.exists()) return null;
+      return snap.val();
+    }
+
+    // ---- ページ初期化 ----
+    async function init() {
+      emailjs.init(EMAILJS_PUBLIC_KEY);
+
+      const params = new URLSearchParams(location.search);
+      bookingKey = params.get("id");
+
+      if (!bookingKey) {
+        showError("予約IDが指定されていません。確認メールのリンクからアクセスしてください。");
+        return;
+      }
+
+      try {
+        await loadAllBookings();
+        booking = await loadBooking(bookingKey);
+
+        if (!booking) {
+          showError("予約が見つかりません。IDが間違っているか、既に削除された可能性があります。");
+          return;
+        }
+
+        renderBookingCard();
+      } catch (e) {
+        console.error(e);
+        showError("データの読み込みに失敗しました。しばらくしてから再度お試しください。");
+      }
+    }
+
+    // ---- 予約カード描画 ----
+    function renderBookingCard() {
+      const area = document.getElementById("booking-area");
+      area.innerHTML = "";
+
+      const isCancelled = booking.status === "cancelled";
+      const isDayVisit  = booking.type === "dayvisit";
+
+      const card = document.createElement("div");
+      card.className = "booking-card";
+
+      const statusBadge = isCancelled
+        ? `<span class="badge cancelled">キャンセル済み</span>`
+        : isDayVisit
+          ? `<span class="badge dayvisit">日帰り訪問</span>`
+          : `<span class="badge confirmed">宿泊予約 確定</span>`;
+
+      const datesLine = isDayVisit
+        ? `<strong>${formatJP(booking.startDate)}</strong>（日帰り）`
+        : `<strong>${formatJP(booking.startDate)}</strong> 〜 <strong>${formatJP(booking.endDate)}</strong>（${booking.nights}泊）`;
+
+      card.innerHTML = `
+        <div class="card-header">
+          <h2>📋 予約確認</h2>
+          ${statusBadge}
+        </div>
+        <table class="info-table">
+          <tr><th>お名前</th><td>${escHtml(booking.name)}</td></tr>
+          <tr><th>メール</th><td>${escHtml(booking.email)}</td></tr>
+          <tr><th>日程</th><td>${datesLine}</td></tr>
+          <tr><th>人数</th><td>${booking.guests}名</td></tr>
+          ${booking.notes ? `<tr><th>メモ</th><td>${escHtml(booking.notes)}</td></tr>` : ""}
+          <tr><th>予約日時</th><td>${new Date(booking.bookedAt).toLocaleString("ja-JP")}</td></tr>
+        </table>
+        ${!isCancelled ? `
+        <div class="action-row">
+          <button class="btn-modify" id="btn-modify">📅 日程を変更する</button>
+          <button class="btn-cancel" id="btn-cancel">✕ キャンセルする</button>
+        </div>` : `
+        <p class="cancelled-msg">この予約はキャンセルされています。</p>
+        <a href="${SITE_URL}/index.html" class="btn-back">← 予約ページに戻る</a>
+        `}
+      `;
+
+      area.appendChild(card);
+
+      if (!isCancelled) {
+        document.getElementById("btn-cancel").addEventListener("click", confirmCancel);
+        document.getElementById("btn-modify").addEventListener("click", startModify);
+      }
+    }
+
+    function escHtml(s) {
+      return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    }
+
+    // ---- キャンセル ----
+    function confirmCancel() {
+      const isDayVisit = booking.type === "dayvisit";
+      const dateStr = isDayVisit
+        ? formatJP(booking.startDate)
+        : `${formatJP(booking.startDate)} 〜 ${formatJP(booking.endDate)}`;
+
+      document.getElementById("confirm-msg").textContent =
+        `「${dateStr}」の予約をキャンセルしてもよいですか？`;
+      document.getElementById("confirm-modal").classList.remove("hidden");
+    }
+
+    async function executeCancel() {
+      document.getElementById("confirm-modal").classList.add("hidden");
+      showSpinner("キャンセル処理中...");
+
+      try {
+        await update(ref(db, `bookings/${bookingKey}`), {
+          status: "cancelled",
+          cancelledAt: new Date().toISOString()
+        });
+
+        // 通知メール（失敗しても続行）
+        try {
+          const isDayVisit = booking.type === "dayvisit";
+          const dateStr = isDayVisit
+            ? formatJP(booking.startDate)
+            : `${formatJP(booking.startDate)} 〜 ${formatJP(booking.endDate)}`;
+          await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_NOTIFY_TEMPLATE, {
+            to_email:    booking.email,
+            owner_email: OWNER_EMAIL,
+            guest_name:  booking.name,
+            subject_line: `【キャンセル完了】${dateStr} の予約`,
+            message:     `${booking.name} 様\n\n${dateStr} のご予約をキャンセルしました。\nまたのご利用をお待ちしております。`
+          }, EMAILJS_PUBLIC_KEY);
+        } catch (e) { console.warn("通知メール送信失敗:", e); }
+
+        hideSpinner();
+        booking = { ...booking, status: "cancelled", cancelledAt: new Date().toISOString() };
+        showToast("予約をキャンセルしました", "success");
+        renderBookingCard();
+      } catch (e) {
+        hideSpinner();
+        console.error(e);
+        showToast("キャンセルに失敗しました。もう一度お試しください。", "error");
+      }
+    }
+
+    // ---- 日程変更 ----
+    function startModify() {
+      modifyMode = true;
+      selectStart = null; selectEnd = null; hoveredDate = null;
+
+      const area = document.getElementById("booking-area");
+      const calSection = document.getElementById("cal-section");
+      calSection.classList.remove("hidden");
+
+      document.getElementById("modify-guide").textContent =
+        booking.type === "dayvisit"
+          ? "新しい日帰り訪問日を1日クリックしてください"
+          : "新しいチェックイン日 → チェックアウト日の順にクリックしてください";
+
+      renderCalendars();
+      calSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function cancelModify() {
+      modifyMode = false;
+      selectStart = null; selectEnd = null; hoveredDate = null;
+      document.getElementById("cal-section").classList.add("hidden");
+      document.getElementById("confirm-new-dates").classList.add("hidden");
+    }
+
+    // ---- カレンダー描画（変更モード用） ----
+    // 現在の予約自身は「空き」として扱う（自分の日程を再選択できるように）
+    function isBlockedForModify(dateStr) {
+      return allBookings.some(r => {
+        if (r.key === bookingKey) return false; // 自分の予約は除外
+        const bufferEnd = addDays(r.end, 1);
+        return dateStr >= r.start && dateStr <= bufferEnd;
+      });
+    }
+
+    function isInSelectionRange(dateStr) {
+      if (!selectStart) return false;
+      const end = selectEnd || hoveredDate;
+      if (!end) return false;
+      const lo = selectStart <= end ? selectStart : end;
+      const hi = selectStart <= end ? end : selectStart;
+      return dateStr > lo && dateStr < hi;
+    }
+
+    function hasBlockedInRange(start, end) {
+      const lo = start <= end ? start : end;
+      const hi = start <= end ? end : start;
+      return allBookings.some(r => {
+        if (r.key === bookingKey) return false;
+        const bufferEnd = addDays(r.end, 1);
+        return r.start <= hi && bufferEnd >= lo;
+      });
+    }
+
+    function renderCalendars() {
+      const container = document.getElementById("cal-grid-area");
+      container.innerHTML = "";
+      MONTHS.forEach(({ year, month }) => container.appendChild(buildMonthEl(year, month)));
+    }
+
+    function buildMonthEl(year, month) {
+      const wrap = document.createElement("div");
+      wrap.className = "month-block";
+      const title = document.createElement("h3");
+      title.textContent = `${year}年 ${JP_MO[month-1]}`;
+      wrap.appendChild(title);
+
+      const grid = document.createElement("div");
+      grid.className = "cal-grid";
+      JP_WD.forEach((w,i) => {
+        const h = document.createElement("div");
+        h.className = "cal-header" + (i===0?" sun":i===6?" sat":"");
+        h.textContent = w;
+        grid.appendChild(h);
+      });
+
+      const firstDay = new Date(year, month-1, 1).getDay();
+      for (let i=0; i<firstDay; i++) {
+        const b = document.createElement("div");
+        b.className = "cal-cell empty";
+        grid.appendChild(b);
+      }
+
+      const daysInMonth = new Date(year, month, 0).getDate();
+      for (let d=1; d<=daysInMonth; d++) {
+        const ds      = toDateStr(year, month, d);
+        const wd      = new Date(year, month-1, d).getDay();
+        const blocked = isBlockedForModify(ds);
+        const inRange = isInSelectionRange(ds);
+        const isEdge  = ds === selectStart || ds === (selectEnd || hoveredDate);
+
+        const cell = document.createElement("div");
+        let cls = "cal-cell";
+        if (blocked)      cls += " booked";
+        else if (isEdge)  cls += " selected-edge";
+        else if (inRange) cls += " in-range";
+        else              cls += " available";
+        if (wd===0) cls += " sun";
+        if (wd===6) cls += " sat";
+        cell.className    = cls;
+        cell.dataset.date = ds;
+
+        const num  = document.createElement("span");
+        num.className   = "day-num";
+        num.textContent = d;
+        const mark = document.createElement("span");
+        mark.className   = "day-mark";
+        mark.textContent = blocked ? "×" : "○";
+        cell.appendChild(num);
+        cell.appendChild(mark);
+        grid.appendChild(cell);
+      }
+
+      wrap.appendChild(grid);
+      return wrap;
+    }
+
+    function handleCellClick(ds) {
+      if (booking.type === "dayvisit") {
+        selectStart = ds; selectEnd = ds;
+        renderCalendars();
+        showNewDatesConfirm();
+        return;
+      }
+      // 宿泊
+      if (!selectStart || selectEnd) {
+        selectStart = ds; selectEnd = null; hoveredDate = null;
+        renderCalendars();
+        document.getElementById("modify-guide").textContent = `チェックイン: ${formatJP(ds)}　→ 次にチェックアウト日をクリック`;
+        document.getElementById("confirm-new-dates").classList.add("hidden");
+      } else {
+        const lo = selectStart <= ds ? selectStart : ds;
+        const hi = selectStart <= ds ? ds : selectStart;
+        if (lo === hi) {
+          showToast("チェックインとチェックアウトは別の日にしてください。", "error");
+          return;
+        }
+        if (hasBlockedInRange(lo, hi)) {
+          showToast("選択した期間に予約済みの日が含まれています。", "error");
+          selectStart = null; selectEnd = null; renderCalendars();
+          return;
+        }
+        selectStart = lo; selectEnd = hi;
+        renderCalendars();
+        showNewDatesConfirm();
+      }
+    }
+
+    function showNewDatesConfirm() {
+      const box = document.getElementById("confirm-new-dates");
+      const isDV = booking.type === "dayvisit";
+      const nights = isDV ? 0 : calcNights(selectStart, selectEnd);
+      document.getElementById("new-dates-text").innerHTML = isDV
+        ? `<strong>${formatJP(selectStart)}</strong>（日帰り）`
+        : `<strong>${formatJP(selectStart)}</strong> 〜 <strong>${formatJP(selectEnd)}</strong>（${nights}泊）`;
+      box.classList.remove("hidden");
+    }
+
+    async function executeModify() {
+      showSpinner("日程を変更中...");
+      document.getElementById("confirm-new-dates").classList.add("hidden");
+
+      const isDV   = booking.type === "dayvisit";
+      const nights = isDV ? 0 : calcNights(selectStart, selectEnd);
+
+      try {
+        await update(ref(db, `bookings/${bookingKey}`), {
+          startDate:  selectStart,
+          endDate:    selectEnd,
+          nights:     nights,
+          modifiedAt: new Date().toISOString(),
+          status:     "confirmed"
+        });
+
+        // 通知メール
+        try {
+          const oldDateStr = isDV
+            ? formatJP(booking.startDate)
+            : `${formatJP(booking.startDate)} 〜 ${formatJP(booking.endDate)}`;
+          const newDateStr = isDV
+            ? formatJP(selectStart)
+            : `${formatJP(selectStart)} 〜 ${formatJP(selectEnd)}`;
+          await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_NOTIFY_TEMPLATE, {
+            to_email:    booking.email,
+            owner_email: OWNER_EMAIL,
+            guest_name:  booking.name,
+            subject_line: `【日程変更完了】${newDateStr} に変更しました`,
+            message:     `${booking.name} 様\n\nご予約の日程を変更しました。\n\n変更前: ${oldDateStr}\n変更後: ${newDateStr}\n\nご不明な点はオーナーにご連絡ください。`
+          }, EMAILJS_PUBLIC_KEY);
+        } catch (e) { console.warn("通知メール送信失敗:", e); }
+
+        booking = {
+          ...booking,
+          startDate: selectStart, endDate: selectEnd, nights,
+          modifiedAt: new Date().toISOString(), status: "confirmed"
+        };
+        hideSpinner();
+        showToast("日程を変更しました！", "success");
+        cancelModify();
+        renderBookingCard();
+      } catch (e) {
+        hideSpinner();
+        console.error(e);
+        showToast("変更に失敗しました。もう一度お試しください。", "error");
+      }
+    }
+
+    // ---- UI ヘルパー ----
+    function showError(msg) {
+      document.getElementById("loading").classList.add("hidden");
+      const err = document.getElementById("error-area");
+      err.textContent = msg;
+      err.classList.remove("hidden");
+    }
+
+    function showToast(msg, type) {
+      const t = document.getElementById("toast");
+      t.textContent = msg; t.className = `toast show ${type}`;
+      setTimeout(() => t.className = "toast", 4500);
+    }
+
+    function showSpinner(msg) {
+      document.getElementById("spinner-msg").textContent = msg;
+      document.getElementById("spinner").classList.remove("hidden");
+    }
+    function hideSpinner() {
+      document.getElementById("spinner").classList.add("hidden");
+    }
+
+    // ---- イベントデリゲーション（カレンダー） ----
+    window.addEventListener("DOMContentLoaded", () => {
+      init().then(() => {
+        document.getElementById("loading").classList.add("hidden");
+        document.getElementById("booking-area").classList.remove("hidden");
+      });
+
+      // 確認ダイアログ
+      document.getElementById("confirm-yes").addEventListener("click", executeCancel);
+      document.getElementById("confirm-no").addEventListener("click", () => {
+        document.getElementById("confirm-modal").classList.add("hidden");
+      });
+
+      // 日程変更キャンセル
+      document.getElementById("btn-cancel-modify").addEventListener("click", cancelModify);
+
+      // 変更確定
+      document.getElementById("btn-execute-modify").addEventListener("click", executeModify);
+
+      // カレンダーイベントデリゲーション
+      const calContainer = document.getElementById("cal-grid-area");
+
+      calContainer.addEventListener("click", (e) => {
+        const cell = e.target.closest(".cal-cell");
+        if (!cell || cell.classList.contains("booked") || cell.classList.contains("empty")) return;
+        handleCellClick(cell.dataset.date);
+      });
+
+      calContainer.addEventListener("mouseover", (e) => {
+        const cell = e.target.closest(".cal-cell");
+        const ds = cell?.dataset?.date;
+        if (!ds || cell.classList.contains("booked") || cell.classList.contains("empty")) return;
+        if (booking?.type !== "dayvisit" && ds !== hoveredDate) {
+          hoveredDate = ds;
+          if (selectStart && !selectEnd) renderCalendars();
+        }
+      });
+
+      calContainer.addEventListener("mouseleave", () => {
+        if (hoveredDate !== null) {
+          hoveredDate = null;
+          if (selectStart && !selectEnd) renderCalendars();
+        }
+      });
+    });
+  </script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+      background: #f5f7fa; color: #333; min-height: 100vh;
+    }
+
+    header {
+      background: linear-gradient(135deg, #2d6a4f, #40916c);
+      color: #fff; padding: 22px 20px;
+    }
+    header h1 { font-size: 1.3rem; }
+    header p  { margin-top: 4px; opacity: .8; font-size: .83rem; }
+
+    main { max-width: 680px; margin: 0 auto; padding: 24px 16px 60px; }
+
+    /* ---- ローディング・エラー ---- */
+    .loading-msg {
+      text-align: center; padding: 60px 20px;
+      color: #888; font-size: .95rem;
+    }
+    .error-msg {
+      background: #fee2e2; color: #b91c1c;
+      border-radius: 10px; padding: 20px;
+      margin-top: 20px; font-size: .9rem;
+    }
+    .hidden { display: none !important; }
+
+    /* ---- 予約カード ---- */
+    .booking-card {
+      background: #fff; border-radius: 14px;
+      box-shadow: 0 2px 12px rgba(0,0,0,.08); padding: 22px;
+    }
+    .card-header {
+      display: flex; align-items: center; gap: 12px;
+      margin-bottom: 16px; flex-wrap: wrap;
+    }
+    .card-header h2 { font-size: 1.1rem; color: #1b4332; }
+
+    .badge {
+      padding: 4px 12px; border-radius: 20px;
+      font-size: .78rem; font-weight: 700;
+    }
+    .badge.confirmed { background: #d1fae5; color: #065f46; }
+    .badge.dayvisit  { background: #dbeafe; color: #1e40af; }
+    .badge.cancelled { background: #fee2e2; color: #991b1b; }
+
+    .info-table {
+      width: 100%; border-collapse: collapse; margin-bottom: 20px;
+    }
+    .info-table th, .info-table td {
+      padding: 9px 10px; text-align: left; font-size: .88rem;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .info-table th {
+      width: 90px; color: #666; font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .action-row {
+      display: flex; gap: 10px; flex-wrap: wrap;
+    }
+    .btn-modify, .btn-cancel, .btn-back {
+      padding: 11px 22px; border-radius: 8px;
+      font-size: .9rem; font-weight: 700; cursor: pointer;
+      border: none; font-family: inherit; transition: opacity .2s;
+      text-decoration: none; display: inline-block;
+    }
+    .btn-modify { background: #2d6a4f; color: #fff; flex: 1; min-width: 140px; text-align: center; }
+    .btn-modify:hover { opacity: .85; }
+    .btn-cancel { background: #fff; color: #e63946; border: 2px solid #e63946; flex: 1; min-width: 140px; text-align: center; }
+    .btn-cancel:hover { background: #fee2e2; }
+    .btn-back   { background: #f0fdf4; color: #2d6a4f; border: 1.5px solid #bbf7d0; margin-top: 12px; }
+
+    .cancelled-msg { color: #888; font-size: .88rem; margin-bottom: 10px; }
+
+    /* ---- 確認モーダル ---- */
+    #confirm-modal {
+      position: fixed; inset: 0; background: rgba(0,0,0,.45);
+      z-index: 100; display: flex; align-items: center; justify-content: center;
+    }
+    .confirm-box {
+      background: #fff; border-radius: 14px;
+      padding: 26px 22px; width: min(400px, 92vw);
+    }
+    .confirm-box h3 { font-size: 1rem; margin-bottom: 12px; color: #1b4332; }
+    .confirm-box p  { font-size: .88rem; color: #444; margin-bottom: 20px; }
+    .confirm-btns { display: flex; gap: 10px; }
+    .confirm-btns button {
+      flex: 1; padding: 10px; border-radius: 8px;
+      font-size: .9rem; font-weight: 700; cursor: pointer; font-family: inherit; border: none;
+    }
+    #confirm-yes { background: #e63946; color: #fff; }
+    #confirm-yes:hover { background: #b91c1c; }
+    #confirm-no  { background: #f3f4f6; color: #444; }
+    #confirm-no:hover { background: #e5e7eb; }
+
+    /* ---- スピナー ---- */
+    #spinner {
+      position: fixed; inset: 0; background: rgba(255,255,255,.75);
+      z-index: 200; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 14px;
+    }
+    .spinner-ring {
+      width: 42px; height: 42px; border: 4px solid #d1fae5;
+      border-top-color: #2d6a4f; border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #spinner-msg { font-size: .9rem; color: #2d6a4f; }
+
+    /* ---- 日程変更セクション ---- */
+    #cal-section {
+      margin-top: 24px; background: #fff;
+      border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,.08);
+      padding: 20px;
+    }
+    #cal-section h3 { font-size: 1rem; color: #1b4332; margin-bottom: 6px; }
+    #modify-guide {
+      font-size: .84rem; color: #555; margin-bottom: 14px;
+      padding: 8px 12px; background: #f0fdf4; border-radius: 7px;
+      border: 1px solid #bbf7d0;
+    }
+
+    #btn-cancel-modify {
+      margin-bottom: 14px; padding: 7px 16px;
+      background: #fff; color: #888; border: 1.5px solid #ddd;
+      border-radius: 7px; font-size: .82rem; cursor: pointer; font-family: inherit;
+    }
+    #btn-cancel-modify:hover { background: #f3f4f6; }
+
+    /* ---- 新日程確認バー ---- */
+    #confirm-new-dates {
+      margin-top: 16px; background: #f0fdf4;
+      border: 1.5px solid #86efac; border-radius: 10px;
+      padding: 16px;
+    }
+    #confirm-new-dates p { font-size: .9rem; color: #166534; margin-bottom: 12px; }
+    #btn-execute-modify {
+      width: 100%; padding: 12px; background: #2d6a4f; color: #fff;
+      border: none; border-radius: 8px; font-size: .95rem; font-weight: 700;
+      cursor: pointer; font-family: inherit; transition: background .2s;
+    }
+    #btn-execute-modify:hover { background: #1b4332; }
+
+    /* ---- カレンダー ---- */
+    #cal-grid-area {
+      display: flex; flex-wrap: wrap; gap: 18px; justify-content: center;
+    }
+    .month-block {
+      background: #f9fafb; border-radius: 10px;
+      padding: 12px; min-width: 258px;
+      border: 1px solid #e5e7eb;
+    }
+    .month-block h3 {
+      text-align: center; font-size: .9rem;
+      margin-bottom: 8px; color: #2d6a4f;
+    }
+    .cal-grid {
+      display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px;
+    }
+    .cal-header {
+      text-align: center; font-size: .68rem; font-weight: 700;
+      color: #777; padding: 2px 0;
+    }
+    .cal-header.sun { color: #e63946; }
+    .cal-header.sat { color: #457b9d; }
+
+    .cal-cell {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; border-radius: 5px;
+      padding: 3px 1px; min-height: 40px;
+      font-size: .72rem; line-height: 1.2; transition: background .1s;
+    }
+    .cal-cell.empty { background: transparent; }
+    .day-num  { font-size: .65rem; color: #bbb; }
+    .day-mark { font-size: .9rem; font-weight: 700; }
+
+    .cal-cell.available        { cursor: pointer; }
+    .cal-cell.available:hover  { background: #d8f3dc; }
+    .cal-cell.available .day-mark { color: #2d6a4f; }
+    .cal-cell.booked           { background: #fee2e2; cursor: not-allowed; }
+    .cal-cell.booked .day-mark { color: #e63946; }
+    .cal-cell.in-range         { background: #b7e4c7; cursor: pointer; }
+    .cal-cell.in-range .day-mark { color: #1b4332; }
+    .cal-cell.selected-edge    { background: #2d6a4f; cursor: pointer; }
+    .cal-cell.selected-edge .day-num,
+    .cal-cell.selected-edge .day-mark { color: #fff !important; }
+
+    .cal-cell.sun .day-num { color: #e63946; }
+    .cal-cell.sat .day-num { color: #457b9d; }
+
+    /* ---- 凡例 ---- */
+    .cal-legend {
+      display: flex; gap: 16px; flex-wrap: wrap;
+      margin-bottom: 14px; font-size: .8rem; color: #555;
+    }
+    .cal-legend span { display: flex; align-items: center; gap: 5px; }
+    .dot {
+      width: 18px; height: 18px; border-radius: 4px;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: .7rem; font-weight: 700;
+    }
+    .dot.avail  { background: #d8f3dc; color: #2d6a4f; }
+    .dot.booked { background: #fee2e2; color: #e63946; }
+
+    /* ---- トースト ---- */
+    .toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      background: #333; color: #fff; padding: 11px 20px; border-radius: 8px;
+      font-size: .88rem; opacity: 0; transition: opacity .3s;
+      pointer-events: none; z-index: 300; max-width: 90vw; text-align: center;
+    }
+    .toast.show    { opacity: 1; }
+    .toast.success { background: #2d6a4f; }
+    .toast.error   { background: #e63946; }
+
+    footer { text-align: center; padding: 18px; font-size: .75rem; color: #bbb; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>🏠 予約の確認・変更・キャンセル</h1>
+    <p>ご予約内容の確認・日程変更・キャンセルができます</p>
+  </header>
+
+  <main>
+    <p class="loading-msg" id="loading">予約情報を読み込み中...</p>
+    <p class="error-msg hidden" id="error-area"></p>
+    <div class="hidden" id="booking-area"></div>
+
+    <!-- 日程変更カレンダー -->
+    <section id="cal-section" class="hidden">
+      <h3>📅 新しい日程を選択</h3>
+      <p id="modify-guide"></p>
+      <button id="btn-cancel-modify">← 変更をやめる</button>
+
+      <div class="cal-legend">
+        <span><span class="dot avail">○</span> 空き</span>
+        <span><span class="dot booked">×</span> 予約済み・バッファ日</span>
+      </div>
+
+      <div id="cal-grid-area"></div>
+
+      <!-- 新日程の確認バー -->
+      <div id="confirm-new-dates" class="hidden">
+        <p>この日程に変更しますか？　<span id="new-dates-text"></span></p>
+        <button id="btn-execute-modify">✓ この日程に変更する</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- キャンセル確認モーダル -->
+  <div id="confirm-modal" class="hidden">
+    <div class="confirm-box">
+      <h3>予約をキャンセルしますか？</h3>
+      <p id="confirm-msg"></p>
+      <div class="confirm-btns">
+        <button id="confirm-no">戻る</button>
+        <button id="confirm-yes">キャンセルする</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- スピナー -->
+  <div id="spinner" class="hidden">
+    <div class="spinner-ring"></div>
+    <p id="spinner-msg">処理中...</p>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <footer>© 2026 ご予約フォーム</footer>
+</body>
+</html>
