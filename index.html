@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ご宿泊予約</title>
+  <title>ゆか家 · ご予約</title>
 
   <!-- EmailJS -->
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
@@ -19,16 +19,15 @@
     // =============================================
     // ★ 設定（Firebase・EmailJS の値を入れてください）
     // =============================================
-
     const firebaseConfig = {
-  apiKey: "AIzaSyBp7jWNAvdT20k-q_MyzaT4MDKFMqdsj6M",
-  authDomain: "mybookingsystem-6882c.firebaseapp.com",
-  databaseURL: "https://mybookingsystem-6882c-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "mybookingsystem-6882c",
-  storageBucket: "mybookingsystem-6882c.firebasestorage.app",
-  messagingSenderId: "565510902581",
-  appId: "1:565510902581:web:e5a9a238028a1b0dc7727c"
-};
+      apiKey: "AIzaSyBp7jWNAvdT20k-q_MyzaT4MDKFMqdsj6M",
+      authDomain: "mybookingsystem-6882c.firebaseapp.com",
+      databaseURL: "https://mybookingsystem-6882c-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "mybookingsystem-6882c",
+      storageBucket: "mybookingsystem-6882c.firebasestorage.app",
+      messagingSenderId: "565510902581",
+      appId: "1:565510902581:web:e5a9a238028a1b0dc7727c"
+    };
 
     const EMAILJS_SERVICE_ID  = "service_0e0jd8v";
     const EMAILJS_TEMPLATE_ID = "template_itgqkjh";
@@ -43,12 +42,12 @@
     const provider = new GoogleAuthProvider();
 
     // ---- 状態 ----
-    let bookedRanges = [];   // [{start, end, type}]
+    let bookedRanges = [];
     let selectStart  = null;
     let selectEnd    = null;
     let hoveredDate  = null;
-    let currentUser  = null; // Firebase Auth ユーザー
-    let isDayVisit   = false; // false=宿泊, true=日帰り
+    let currentUser  = null;
+    let isDayVisit   = false;
 
     const MONTHS = [
       {year:2026,month:8},{year:2026,month:9},{year:2026,month:10},
@@ -57,7 +56,7 @@
     const JP_WD = ["日","月","火","水","木","金","土"];
     const JP_MO = ["1月","2月","3月","4月","5月","6月","7月","8月","9月","10月","11月","12月"];
 
-    // ---- Firebase: 予約データ監視 ----
+    // ---- Firebase ----
     function loadBookings() {
       onValue(ref(db, "bookings"), (snap) => {
         bookedRanges = [];
@@ -73,26 +72,22 @@
 
     // ---- Google ログイン ----
     async function handleSignIn() {
-      try {
-        await signInWithPopup(auth, provider);
-      } catch (e) { console.error(e); }
+      try { await signInWithPopup(auth, provider); } catch (e) { console.error(e); }
     }
-    async function handleSignOut() {
-      await signOut(auth);
-    }
+    async function handleSignOut() { await signOut(auth); }
 
     onAuthStateChanged(auth, (user) => {
       currentUser = user;
-      const btn    = document.getElementById("auth-btn");
-      const info   = document.getElementById("user-info");
+      const btn  = document.getElementById("auth-btn");
+      const info = document.getElementById("user-info");
       if (user) {
-        btn.textContent   = "ログアウト";
-        btn.onclick       = handleSignOut;
-        info.textContent  = `${user.displayName} さん`;
+        btn.textContent    = "ログアウト";
+        btn.onclick        = handleSignOut;
+        info.textContent   = `${user.displayName} さん`;
         info.style.display = "inline";
       } else {
-        btn.textContent   = "Googleでログイン";
-        btn.onclick       = handleSignIn;
+        btn.textContent    = "Googleでログイン";
+        btn.onclick        = handleSignIn;
         info.style.display = "none";
       }
     });
@@ -106,15 +101,12 @@
       d.setDate(d.getDate() + n);
       return d.toISOString().slice(0,10);
     }
-
-    // チェックアウト当日も × → end を含む & endの翌日もブロック
     function isBlocked(dateStr) {
       return bookedRanges.some(r => {
-        const bufferEnd = addDays(r.end, 1); // チェックアウト翌日までブロック
+        const bufferEnd = addDays(r.end, 1);
         return dateStr >= r.start && dateStr <= bufferEnd;
       });
     }
-
     function isInSelectionRange(dateStr) {
       if (!selectStart) return false;
       const end = selectEnd || hoveredDate;
@@ -123,11 +115,9 @@
       const hi = selectStart <= end ? end : selectStart;
       return dateStr > lo && dateStr < hi;
     }
-
     function hasBlockedInRange(start, end) {
       const lo = start <= end ? start : end;
       const hi = start <= end ? end : start;
-      // 各予約の start〜end+1 と重なるか
       return bookedRanges.some(r => {
         const bufferEnd = addDays(r.end, 1);
         return r.start <= hi && bufferEnd >= lo;
@@ -144,7 +134,8 @@
     function buildMonthEl(year, month) {
       const wrap = document.createElement("div");
       wrap.className = "month-block";
-      const title = document.createElement("h3");
+      const title = document.createElement("div");
+      title.className = "month-title";
       title.textContent = `${year}年 ${JP_MO[month-1]}`;
       wrap.appendChild(title);
 
@@ -180,7 +171,7 @@
         else              cls += " available";
         if (wd===0) cls += " sun";
         if (wd===6) cls += " sat";
-        cell.className   = cls;
+        cell.className    = cls;
         cell.dataset.date = ds;
 
         const num  = document.createElement("span");
@@ -191,7 +182,6 @@
         mark.textContent = blocked ? "×" : "○";
         cell.appendChild(num);
         cell.appendChild(mark);
-
         grid.appendChild(cell);
       }
 
@@ -201,19 +191,15 @@
 
     function handleCellClick(ds) {
       if (isDayVisit) {
-        // 日帰りモード: 1クリックで確定
-        selectStart = ds;
-        selectEnd   = ds;
+        selectStart = ds; selectEnd = ds;
         renderCalendars();
         openModal();
         return;
       }
-      // 宿泊モード
       if (!selectStart || selectEnd) {
         selectStart = ds; selectEnd = null; hoveredDate = null;
         renderCalendars();
-        // チェックイン選択を分かりやすく通知
-        showToast(`チェックイン: ${formatJP(ds)}　→ 次にチェックアウト日をクリックしてください`, "info");
+        showToast(`チェックイン: ${formatJP(ds)}　→ 次にチェックアウト日をクリック`, "info");
         updateCancelBtn(true);
       } else {
         const lo = selectStart <= ds ? selectStart : ds;
@@ -237,13 +223,10 @@
       document.getElementById("modal-end").textContent    = formatJP(selectEnd);
       document.getElementById("modal-nights").textContent =
         isDayVisit ? "（日帰り）" : `（${nights}泊${nights+1}日）`;
-
-      // Google ログイン済みなら自動入力
       if (currentUser) {
         document.getElementById("f-name").value  = currentUser.displayName || "";
         document.getElementById("f-email").value = currentUser.email || "";
       }
-
       document.getElementById("modal").classList.remove("hidden");
     }
 
@@ -257,7 +240,7 @@
 
     function updateCancelBtn(show) {
       const btn = document.getElementById("cancel-selection-btn");
-      if (btn) btn.style.display = show ? "inline-block" : "none";
+      if (btn) btn.style.display = show ? "inline-flex" : "none";
     }
 
     function formatJP(str) {
@@ -294,11 +277,9 @@
       };
 
       try {
-        // ① Firebase に保存（必ず成功させる）
         const newRef = push(ref(db, "bookings"));
         await set(newRef, data);
 
-        // ② メール送信（失敗しても予約は確定扱い）
         let emailOk = false;
         try {
           await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
@@ -314,15 +295,13 @@
             cancel_link: `${SITE_URL}/mybooking.html?id=${newRef.key}`
           }, EMAILJS_PUBLIC_KEY);
           emailOk = true;
-        } catch (mailErr) {
-          console.warn("EmailJS error:", mailErr);
-        }
+        } catch (mailErr) { console.warn("EmailJS error:", mailErr); }
 
         closeModal();
         if (emailOk) {
-          showToast(`予約が完了しました！確認メールを ${email} へ送りました。`, "success");
+          showToast(`予約完了！確認メールを ${email} へ送りました。`, "success");
         } else {
-          showToast(`予約は保存されました。※確認メールの送信に失敗しました。管理者にご連絡ください。`, "warn");
+          showToast(`予約は保存されました。※確認メールの送信に失敗しました。`, "warn");
         }
       } catch (err) {
         console.error(err);
@@ -352,7 +331,6 @@
         renderCalendars();
       });
 
-      // 宿泊 / 日帰り トグル
       document.querySelectorAll(".mode-btn").forEach(btn => {
         btn.addEventListener("click", () => {
           isDayVisit = btn.dataset.mode === "day";
@@ -366,16 +344,12 @@
         });
       });
 
-      // ★ イベントデリゲーション：#calendars コンテナで一括受け取り
-      //   個々のセルはDOMが再構築されても、コンテナは常に存在するので確実に動く
       const calContainer = document.getElementById("calendars");
-
       calContainer.addEventListener("click", (e) => {
         const cell = e.target.closest('.cal-cell');
         if (!cell || cell.classList.contains('booked') || cell.classList.contains('empty')) return;
         handleCellClick(cell.dataset.date);
       });
-
       calContainer.addEventListener("mouseover", (e) => {
         const cell = e.target.closest('.cal-cell');
         const ds = cell?.dataset?.date;
@@ -385,270 +359,439 @@
           if (selectStart && !selectEnd && !isDayVisit) renderCalendars();
         }
       });
-
       calContainer.addEventListener("mouseleave", () => {
         if (hoveredDate !== null) {
           hoveredDate = null;
           if (selectStart && !selectEnd && !isDayVisit) renderCalendars();
         }
       });
+
+      // 写真グリッドのオーバーレイボタン
+      document.getElementById("photos-btn")?.addEventListener("click", () => {
+        document.getElementById("photo-modal").classList.remove("hidden");
+      });
+      document.getElementById("photo-modal-close")?.addEventListener("click", () => {
+        document.getElementById("photo-modal").classList.add("hidden");
+      });
+      document.getElementById("photo-modal-overlay")?.addEventListener("click", () => {
+        document.getElementById("photo-modal").classList.add("hidden");
+      });
     });
   </script>
 
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --red:    #FF385C;
+      --dark:   #222222;
+      --mid:    #717171;
+      --border: #DDDDDD;
+      --bg:     #F7F7F7;
+      --white:  #FFFFFF;
+      --green:  #008A05;
+    }
+
     body {
-      font-family: "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
-      background: #f5f7fa; color: #333; min-height: 100vh;
+      font-family: "Hiragino Kaku Gothic ProN", "Noto Sans JP", -apple-system, sans-serif;
+      background: var(--white); color: var(--dark);
     }
 
-    /* ---- ヘッダー ---- */
-    header {
-      background: linear-gradient(135deg, #2d6a4f, #40916c);
-      color: #fff; padding: 24px 20px 20px;
-    }
-    .header-top {
+    /* ===== NAVBAR ===== */
+    nav {
+      position: sticky; top: 0; z-index: 50;
+      background: var(--white);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
       display: flex; align-items: center; justify-content: space-between;
-      flex-wrap: wrap; gap: 10px;
+      height: 64px;
     }
-    header h1 { font-size: 1.4rem; letter-spacing: .04em; }
-    header p  { margin-top: 4px; opacity: .8; font-size: .85rem; }
-
-    .auth-area { display: flex; align-items: center; gap: 10px; }
+    .nav-logo {
+      font-size: 1.2rem; font-weight: 800;
+      color: var(--dark); text-decoration: none; letter-spacing: -.01em;
+    }
+    .nav-auth { display: flex; align-items: center; gap: 10px; }
     #user-info {
-      font-size: .82rem; background: rgba(255,255,255,.2);
-      padding: 4px 10px; border-radius: 12px;
+      font-size: .82rem; color: var(--mid);
+      background: var(--bg); padding: 5px 12px; border-radius: 20px;
     }
     #auth-btn {
-      padding: 7px 16px; border: 2px solid rgba(255,255,255,.7);
-      background: transparent; color: #fff; border-radius: 8px;
-      font-size: .82rem; cursor: pointer; transition: background .2s;
-      font-family: inherit;
+      padding: 8px 16px; border-radius: 22px;
+      border: 1px solid var(--border);
+      background: var(--white); color: var(--dark);
+      font-size: .85rem; cursor: pointer; font-family: inherit;
+      font-weight: 600; transition: box-shadow .15s;
     }
-    #auth-btn:hover { background: rgba(255,255,255,.2); }
+    #auth-btn:hover { box-shadow: 0 2px 8px rgba(0,0,0,.12); }
 
-    /* ---- モードトグル ---- */
+    /* ===== PHOTO GRID ===== */
+    .photo-section { max-width: 1120px; margin: 24px auto 0; padding: 0 24px; }
+
+    .photo-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 240px 240px;
+      gap: 8px; border-radius: 16px; overflow: hidden;
+      position: relative;
+    }
+    .photo-grid img {
+      width: 100%; height: 100%; object-fit: cover; display: block;
+    }
+    .photo-main {
+      grid-row: 1 / 3;
+    }
+    .photo-side {
+      display: grid; grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr; gap: 8px;
+    }
+    .photo-side img { border-radius: 0; }
+    .photo-side img:nth-child(2) { border-top-right-radius: 0; }
+    .photo-side img:nth-child(4) { border-bottom-right-radius: 0; }
+
+    .photos-btn-wrap {
+      position: absolute; bottom: 14px; right: 14px;
+    }
+    #photos-btn {
+      background: var(--white); border: 1.5px solid var(--dark);
+      border-radius: 8px; padding: 7px 14px;
+      font-size: .8rem; font-weight: 600; cursor: pointer;
+      font-family: inherit; transition: background .15s;
+      display: flex; align-items: center; gap: 5px;
+    }
+    #photos-btn:hover { background: var(--bg); }
+
+    /* Mobile: only show main photo */
+    @media (max-width: 640px) {
+      .photo-grid {
+        grid-template-columns: 1fr;
+        grid-template-rows: 260px;
+      }
+      .photo-main { grid-row: auto; }
+      .photo-side { display: none; }
+    }
+
+    /* ===== LISTING HEADER ===== */
+    .listing-section { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+    .listing-header {
+      padding: 28px 0 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .listing-title { font-size: 1.5rem; font-weight: 700; margin-bottom: 8px; }
+    .listing-meta  { font-size: .88rem; color: var(--mid); }
+
+    .listing-features {
+      display: flex; gap: 28px; flex-wrap: wrap;
+      padding: 24px 0; border-bottom: 1px solid var(--border);
+    }
+    .feature-item {
+      display: flex; align-items: center; gap: 12px;
+    }
+    .feature-icon { font-size: 1.5rem; }
+    .feature-text h4 { font-size: .9rem; font-weight: 600; }
+    .feature-text p  { font-size: .8rem; color: var(--mid); margin-top: 1px; }
+
+    .listing-desc {
+      padding: 24px 0; border-bottom: 1px solid var(--border);
+      font-size: .92rem; line-height: 1.7; color: #444;
+    }
+
+    /* ===== BOOKING SECTION ===== */
+    .booking-section {
+      padding: 28px 0 60px;
+    }
+    .booking-section h2 {
+      font-size: 1.3rem; font-weight: 700; margin-bottom: 6px;
+    }
+    .booking-period {
+      font-size: .85rem; color: var(--mid); margin-bottom: 20px;
+    }
+
+    /* mode toggle */
     .mode-toggle {
-      display: flex; justify-content: center; gap: 0;
-      padding: 16px 0 4px;
+      display: inline-flex; border: 1.5px solid var(--border);
+      border-radius: 10px; overflow: hidden; margin-bottom: 16px;
     }
     .mode-btn {
-      padding: 9px 28px; border: 2px solid #2d6a4f;
-      background: #fff; color: #2d6a4f;
-      font-size: .9rem; cursor: pointer; font-family: inherit;
-      transition: all .2s;
+      padding: 9px 22px; background: var(--white); color: var(--mid);
+      border: none; font-size: .88rem; font-weight: 600; cursor: pointer;
+      font-family: inherit; transition: all .2s;
+    }
+    .mode-btn.active {
+      background: var(--dark); color: var(--white);
     }
     .mode-btn:first-child { border-radius: 8px 0 0 8px; }
-    .mode-btn:last-child  { border-radius: 0 8px 8px 0; border-left: none; }
-    .mode-btn.active { background: #2d6a4f; color: #fff; }
+    .mode-btn:last-child  { border-radius: 0 8px 8px 0; }
 
-    /* ---- ガイド ---- */
-    .guide {
-      text-align: center; padding: 10px 16px 2px;
-      color: #666; font-size: .85rem;
+    /* guide + cancel btn */
+    .guide-row {
+      display: flex; align-items: center; gap: 10px;
+      flex-wrap: wrap; margin-bottom: 16px; min-height: 32px;
     }
+    #guide-text { font-size: .84rem; color: var(--mid); }
+    #cancel-selection-btn {
+      display: none; align-items: center; gap: 4px;
+      padding: 5px 12px; border-radius: 20px;
+      border: 1.5px solid #E63946; background: var(--white);
+      color: #E63946; font-size: .8rem; font-weight: 600;
+      cursor: pointer; font-family: inherit;
+    }
+    #cancel-selection-btn:hover { background: #FEE2E2; }
 
-    /* ---- 凡例 ---- */
+    /* legend */
     .legend {
-      display: flex; gap: 18px; justify-content: center;
-      padding: 8px 0 14px; font-size: .82rem; flex-wrap: wrap;
+      display: flex; gap: 20px; margin-bottom: 20px; flex-wrap: wrap;
     }
-    .legend-item { display: flex; align-items: center; gap: 5px; }
+    .legend-item { display: flex; align-items: center; gap: 7px; font-size: .82rem; color: var(--mid); }
     .legend-dot {
-      width: 22px; height: 22px; border-radius: 5px;
+      width: 28px; height: 28px; border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
-      font-size: .75rem; font-weight: 700;
+      font-size: .8rem; font-weight: 700; border: 1.5px solid transparent;
     }
-    .legend-dot.avail  { background: #d8f3dc; color: #2d6a4f; }
-    .legend-dot.booked { background: #fee2e2; color: #e63946; }
+    .legend-dot.avail  { background: #F7F7F7; border-color: var(--border); color: var(--green); }
+    .legend-dot.booked { background: #FEE2E2; color: #E63946; }
 
-    /* ---- カレンダー ---- */
+    /* ===== CALENDAR ===== */
     #calendars {
-      display: flex; flex-wrap: wrap; gap: 20px;
-      justify-content: center; padding: 8px 16px 40px;
+      display: flex; flex-wrap: wrap; gap: 16px;
     }
     .month-block {
-      background: #fff; border-radius: 12px;
-      box-shadow: 0 2px 10px rgba(0,0,0,.07);
-      padding: 14px; min-width: 272px;
+      background: var(--white); border: 1px solid var(--border);
+      border-radius: 14px; padding: 18px; min-width: 268px;
     }
-    .month-block h3 {
-      text-align: center; font-size: .95rem;
-      margin-bottom: 8px; color: #2d6a4f;
+    .month-title {
+      text-align: center; font-size: .95rem; font-weight: 700;
+      margin-bottom: 12px; color: var(--dark);
     }
     .cal-grid {
-      display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px;
+      display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px;
     }
     .cal-header {
-      text-align: center; font-size: .7rem; font-weight: 700;
-      color: #777; padding: 3px 0;
+      text-align: center; font-size: .68rem; font-weight: 700;
+      color: var(--mid); padding: 3px 0 6px;
     }
-    .cal-header.sun { color: #e63946; }
-    .cal-header.sat { color: #457b9d; }
+    .cal-header.sun { color: #E63946; }
+    .cal-header.sat { color: #1D4ED8; }
 
     .cal-cell {
       display: flex; flex-direction: column; align-items: center;
-      justify-content: center; border-radius: 6px;
-      padding: 4px 2px; min-height: 44px;
-      font-size: .75rem; line-height: 1.2; transition: background .12s;
+      justify-content: center; border-radius: 50%;
+      padding: 4px 2px; min-height: 46px;
+      font-size: .75rem; line-height: 1.2;
+      transition: background .1s; aspect-ratio: 1;
     }
-    .cal-cell.empty { background: transparent; }
-    .day-num  { font-size: .68rem; color: #aaa; }
-    .day-mark { font-size: .95rem; font-weight: 700; }
+    .cal-cell.empty { background: transparent; border-radius: 0; }
+    .day-num  { font-size: .66rem; color: #bbb; }
+    .day-mark { font-size: .88rem; font-weight: 700; }
 
-    .cal-cell.available      { cursor: pointer; }
-    .cal-cell.available:hover { background: #d8f3dc; }
-    .cal-cell.available .day-mark { color: #2d6a4f; }
-    .cal-cell.booked         { background: #fee2e2; cursor: not-allowed; }
-    .cal-cell.booked .day-mark { color: #e63946; }
-    .cal-cell.in-range        { background: #b7e4c7; cursor: pointer; }
-    .cal-cell.in-range .day-mark { color: #1b4332; }
-    .cal-cell.selected-edge   { background: #2d6a4f; cursor: pointer; }
+    .cal-cell.available        { cursor: pointer; }
+    .cal-cell.available:hover  { background: var(--bg); }
+    .cal-cell.available .day-mark { color: var(--green); }
+    .cal-cell.booked           { background: #FEF2F2; cursor: not-allowed; border-radius: 6px; }
+    .cal-cell.booked .day-mark { color: #E63946; }
+
+    .cal-cell.in-range        { background: #FCE7EB; border-radius: 0; cursor: pointer; }
+    .cal-cell.in-range .day-mark { color: var(--red); }
+
+    .cal-cell.selected-edge   { background: var(--dark); cursor: pointer; }
     .cal-cell.selected-edge .day-num,
-    .cal-cell.selected-edge .day-mark { color: #fff !important; }
+    .cal-cell.selected-edge .day-mark { color: var(--white) !important; }
 
-    .cal-cell.sun .day-num { color: #e63946; }
-    .cal-cell.sat .day-num { color: #457b9d; }
+    .cal-cell.sun .day-num { color: #E63946; }
+    .cal-cell.sat .day-num { color: #1D4ED8; }
 
-    /* ---- モーダル ---- */
+    /* ===== MODAL ===== */
     #modal.hidden { display: none; }
     #modal-overlay {
-      position: fixed; inset: 0; background: rgba(0,0,0,.45);
+      position: fixed; inset: 0; background: rgba(0,0,0,.5);
       z-index: 100; display: flex; align-items: center; justify-content: center;
     }
     .modal-box {
-      background: #fff; border-radius: 14px;
-      padding: 26px 22px 22px; width: min(460px, 94vw);
+      background: var(--white); border-radius: 16px;
+      padding: 28px 24px 24px; width: min(480px, 94vw);
       position: relative; z-index: 101;
+      box-shadow: 0 8px 40px rgba(0,0,0,.18);
     }
-    .modal-box h2 { font-size: 1.05rem; color: #2d6a4f; margin-bottom: 4px; }
-    .modal-box .dates-summary { font-size: .85rem; color: #555; margin-bottom: 18px; }
+    .modal-box h2 {
+      font-size: 1.1rem; font-weight: 700;
+      color: var(--dark); margin-bottom: 4px;
+    }
+    .modal-box .dates-summary {
+      font-size: .85rem; color: var(--mid); margin-bottom: 20px;
+      padding-bottom: 16px; border-bottom: 1px solid var(--border);
+    }
     #modal-close {
-      position: absolute; top: 12px; right: 14px;
-      background: none; border: none; font-size: 1.3rem; cursor: pointer; color: #bbb;
+      position: absolute; top: 14px; right: 16px;
+      background: none; border: none; font-size: 1.2rem;
+      cursor: pointer; color: var(--mid); width: 32px; height: 32px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 50%; transition: background .15s;
     }
-    #modal-close:hover { color: #555; }
+    #modal-close:hover { background: var(--bg); }
 
     .google-prefill-note {
-      background: #f0fdf4; border: 1px solid #bbf7d0;
-      border-radius: 7px; padding: 8px 12px; margin-bottom: 14px;
+      background: #F0FDF4; border: 1px solid #BBF7D0;
+      border-radius: 8px; padding: 8px 12px; margin-bottom: 14px;
       font-size: .8rem; color: #166534;
     }
-    .form-group        { margin-bottom: 12px; }
-    .form-group label  { display: block; font-size: .8rem; color: #555; margin-bottom: 3px; }
+    .form-group        { margin-bottom: 14px; }
+    .form-group label  { display: block; font-size: .8rem; font-weight: 600; color: var(--dark); margin-bottom: 4px; }
     .form-group input,
     .form-group select,
     .form-group textarea {
-      width: 100%; border: 1px solid #ddd; border-radius: 7px;
-      padding: 8px 10px; font-size: .88rem; font-family: inherit;
+      width: 100%; border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px 12px; font-size: .88rem; font-family: inherit;
+      transition: border-color .15s, box-shadow .15s;
     }
     .form-group input:focus,
     .form-group select:focus,
     .form-group textarea:focus {
-      outline: none; border-color: #40916c;
-      box-shadow: 0 0 0 3px rgba(64,145,108,.12);
+      outline: none; border-color: var(--dark);
+      box-shadow: 0 0 0 3px rgba(34,34,34,.08);
     }
-    .form-group textarea { resize: vertical; min-height: 64px; }
+    .form-group textarea { resize: vertical; min-height: 68px; }
 
     #submit-btn {
-      width: 100%; padding: 12px; background: #2d6a4f; color: #fff;
-      border: none; border-radius: 8px; font-size: .95rem; font-weight: 700;
-      cursor: pointer; transition: background .2s;
+      width: 100%; padding: 14px;
+      background: linear-gradient(to right, #E61E4D, #E31C5F, #D70466);
+      color: var(--white); border: none; border-radius: 10px;
+      font-size: 1rem; font-weight: 700; cursor: pointer;
+      transition: opacity .2s; letter-spacing: .01em;
     }
-    #submit-btn:hover:not(:disabled) { background: #1b4332; }
+    #submit-btn:hover:not(:disabled) { opacity: .9; }
     #submit-btn:disabled { opacity: .6; cursor: not-allowed; }
 
-    /* ---- トースト ---- */
+    /* ===== PHOTO MODAL ===== */
+    #photo-modal.hidden { display: none; }
+    #photo-modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,.9);
+      z-index: 200; display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 12px; padding: 20px;
+      overflow-y: auto;
+    }
+    #photo-modal-close {
+      position: fixed; top: 16px; right: 20px;
+      background: rgba(255,255,255,.15); border: none;
+      color: white; font-size: 1.4rem; cursor: pointer;
+      width: 40px; height: 40px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      z-index: 201;
+    }
+    .photo-modal-img {
+      max-width: min(900px, 96vw); border-radius: 10px; display: block;
+    }
+
+    /* ===== TOAST ===== */
     .toast {
-      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-      background: #333; color: #fff; padding: 11px 20px; border-radius: 8px;
+      position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
+      background: var(--dark); color: var(--white);
+      padding: 12px 22px; border-radius: 24px;
       font-size: .88rem; opacity: 0; transition: opacity .3s;
-      pointer-events: none; z-index: 200; max-width: 90vw; text-align: center;
+      pointer-events: none; z-index: 300; max-width: 90vw;
+      text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,.25);
     }
     .toast.show    { opacity: 1; }
-    .toast.success { background: #2d6a4f; }
-    .toast.error   { background: #e63946; }
-    .toast.warn    { background: #b45309; }
-    .toast.info    { background: #1d4ed8; }
+    .toast.success { background: #008A05; }
+    .toast.error   { background: #E63946; }
+    .toast.warn    { background: #B45309; }
+    .toast.info    { background: #1D4ED8; }
 
-    #cancel-selection-btn {
-      display: none;
-      margin-left: 12px;
-      padding: 5px 14px;
-      background: #fff; color: #e63946;
-      border: 1.5px solid #e63946; border-radius: 6px;
-      font-size: .82rem; cursor: pointer; font-family: inherit;
+    footer {
+      text-align: center; padding: 32px 20px;
+      font-size: .76rem; color: #AAAAAA;
+      border-top: 1px solid var(--border);
     }
-    #cancel-selection-btn:hover { background: #fee2e2; }
-
-    footer { text-align: center; padding: 18px; font-size: .76rem; color: #bbb; }
   </style>
 </head>
 <body>
 
-  <header>
-    <div class="header-top">
-      <div>
-        <h1>🏠 ご宿泊予約</h1>
-        <p>2026年8月〜2027年2月</p>
+  <!-- ===== NAVBAR ===== -->
+  <nav>
+    <span class="nav-logo">TANAKA's Cozy Beach Home</span>
+    <div class="nav-auth">
+      <span id="user-info" style="display:none"></span>
+      <button id="auth-btn">Googleでログイン</button>
+    </div>
+  </nav>
+
+  <!-- ===== PHOTO GRID ===== -->
+  <div class="photo-section">
+    <div class="photo-grid">
+      <!-- メイン写真（大） -->
+      <div class="photo-main">
+        <img src="images/photo1.jpg" alt="ウッドデッキ・BBQスペース">
       </div>
-      <div class="auth-area">
-        <span id="user-info" style="display:none"></span>
-        <button id="auth-btn" onclick="">Googleでログイン</button>
+      <!-- サブ写真（2×2） -->
+      <div class="photo-side">
+        <img src="images/photo2.jpg" alt="リビング">
+        <img src="images/photo3.jpg" alt="外観">
+        <img src="images/photo4.jpg" alt="近くの海・サンセット">
+        <img src="images/photo5.jpg" alt="近くのビーチ">
+      </div>
+      <!-- すべての写真ボタン -->
+      <div class="photos-btn-wrap">
+        <button id="photos-btn">🖼️ すべての写真</button>
       </div>
     </div>
-  </header>
-
-  <!-- 宿泊 / 日帰り トグル -->
-  <div class="mode-toggle">
-    <button class="mode-btn active" data-mode="stay">🛏️ 宿泊予約</button>
-    <button class="mode-btn" data-mode="day">🚗 日帰り訪問</button>
   </div>
 
-  <div style="text-align:center; padding: 10px 16px 2px; display:flex; align-items:center; justify-content:center; gap:4px; flex-wrap:wrap;">
-    <p class="guide" id="guide-text" style="padding:0;">
-      チェックイン日をクリック → チェックアウト日をクリックして日程を選んでください
-    </p>
-    <button id="cancel-selection-btn">✕ 選択をキャンセル</button>
-  </div>
+  <!-- ===== LISTING HEADER ===== -->
+  <div class="listing-section">
+    <!-- ===== BOOKING SECTION ===== -->
+    <div class="booking-section">
+      <h2>日程を選択して予約</h2>
+      <p class="booking-period">予約可能期間: 2026年8月〜2027年2月</p>
 
-  <div class="legend">
-    <div class="legend-item">
-      <div class="legend-dot avail">○</div> 空き
+      <!-- 宿泊 / 日帰り トグル -->
+      <div class="mode-toggle">
+        <button class="mode-btn active" data-mode="stay">🛏️ 宿泊</button>
+        <button class="mode-btn" data-mode="day">🚗 日帰り</button>
+      </div>
+
+      <div class="guide-row">
+        <p id="guide-text">チェックイン日をクリック → チェックアウト日をクリックして日程を選んでください</p>
+        <button id="cancel-selection-btn">✕ 選択をやめる</button>
+      </div>
+
+      <div class="legend">
+        <div class="legend-item">
+          <div class="legend-dot avail">○</div> 空き
+        </div>
+        <div class="legend-item">
+          <div class="legend-dot booked">×</div> 予約済み
+        </div>
+      </div>
+
+      <div id="calendars">
+        <p style="color:#bbb;padding:40px;text-align:center;font-size:.9rem;">カレンダーを読み込み中...</p>
+      </div>
     </div>
-    <div class="legend-item">
-      <div class="legend-dot booked">×</div> 予約済み・バッファ日
-    </div>
   </div>
 
-  <div id="calendars">
-    <p style="color:#bbb;padding:40px;text-align:center;">カレンダーを読み込み中...</p>
-  </div>
-
-  <!-- 予約モーダル -->
+  <!-- ===== 予約モーダル ===== -->
   <div id="modal" class="hidden">
     <div id="modal-overlay">
       <div class="modal-box" onclick="event.stopPropagation()">
         <button id="modal-close" aria-label="閉じる">✕</button>
-        <h2 id="modal-title">予約内容の入力</h2>
+        <h2>予約内容の入力</h2>
         <p class="dates-summary">
           <strong id="modal-start"></strong> 〜 <strong id="modal-end"></strong>
           <span id="modal-nights"></span>
         </p>
         <div class="google-prefill-note" id="prefill-note" style="display:none">
-          ✅ Google アカウントから名前・メールを自動入力しました
+          ✅ Googleアカウントから名前・メールを自動入力しました
         </div>
         <form id="booking-form">
           <div class="form-group">
-            <label for="f-name">お名前 <span style="color:#e63946">*</span></label>
+            <label for="f-name">お名前 <span style="color:#E63946">*</span></label>
             <input id="f-name" type="text" required placeholder="山田 太郎">
           </div>
           <div class="form-group">
-            <label for="f-email">メールアドレス <span style="color:#e63946">*</span></label>
+            <label for="f-email">メールアドレス <span style="color:#E63946">*</span></label>
             <input id="f-email" type="email" required placeholder="example@email.com">
           </div>
           <div class="form-group">
-            <label for="f-guests">人数 <span style="color:#e63946">*</span></label>
+            <label for="f-guests">人数 <span style="color:#E63946">*</span></label>
             <select id="f-guests" required>
               <option value="">選択してください</option>
               <option value="1">1名</option>
@@ -669,33 +812,31 @@
     </div>
   </div>
 
+  <!-- ===== 写真モーダル ===== -->
+  <div id="photo-modal" class="hidden">
+    <div id="photo-modal-overlay">
+      <button id="photo-modal-close">✕</button>
+      <img class="photo-modal-img" src="images/photo1.jpg" alt="ウッドデッキ">
+      <img class="photo-modal-img" src="images/photo2.jpg" alt="リビング">
+      <img class="photo-modal-img" src="images/photo3.jpg" alt="外観">
+      <img class="photo-modal-img" src="images/photo4.jpg" alt="サンセット">
+      <img class="photo-modal-img" src="images/photo5.jpg" alt="ビーチ">
+    </div>
+  </div>
+
   <div id="toast" class="toast"></div>
 
-  <script>
-    // モーダルを開いたとき、Googleログイン済みなら自動入力バナーを表示
-    const origOpen = window.openModal;
-    document.addEventListener("DOMContentLoaded", () => {
-      // prefill-note の表示制御はモジュール内の openModal で管理
-    });
-  </script>
-
-  <!-- prefill-note の表示制御を module 内に移動済み -->
+  <!-- prefill-note 表示制御 -->
   <script type="module">
-    // openModal の補足: ログイン済みのときバナー表示
-    // （module スコープのため直接参照できないので MutationObserver で対応）
     const observer = new MutationObserver(() => {
-      const modal = document.getElementById("modal");
-      const note  = document.getElementById("prefill-note");
+      const modal   = document.getElementById("modal");
+      const note    = document.getElementById("prefill-note");
       const nameVal = document.getElementById("f-name").value;
-      if (!modal.classList.contains("hidden") && nameVal) {
-        note.style.display = "block";
-      } else {
-        note.style.display = "none";
-      }
+      note.style.display = (!modal.classList.contains("hidden") && nameVal) ? "block" : "none";
     });
     observer.observe(document.getElementById("modal"), { attributes: true, attributeFilter: ["class"] });
   </script>
 
-  <footer>© 2026 ご予約フォーム</footer>
+  <footer>© 2026 ゆか家 · プライベート予約フォーム</footer>
 </body>
 </html>
