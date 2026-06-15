@@ -31,7 +31,7 @@
 };
 
     const EMAILJS_SERVICE_ID  = "service_0e0jd8v";
-    const EMAILJS_TEMPLATE_ID = "itgqkjh";
+    const EMAILJS_TEMPLATE_ID = "template_itgqkjh";
     const EMAILJS_PUBLIC_KEY  = "aUk62Y6jyfXBt4Qxw";
     const OWNER_EMAIL         = "yukgatatsu.tasutasu@gmail.com";
     // =============================================
@@ -191,10 +191,6 @@
         cell.appendChild(num);
         cell.appendChild(mark);
 
-        if (!blocked) {
-          cell.addEventListener("click",      () => handleCellClick(ds));
-          cell.addEventListener("mouseenter", () => { hoveredDate=ds; if(selectStart&&!selectEnd&&!isDayVisit) renderCalendars(); });
-        }
         grid.appendChild(cell);
       }
 
@@ -215,14 +211,19 @@
       if (!selectStart || selectEnd) {
         selectStart = ds; selectEnd = null; hoveredDate = null;
         renderCalendars();
+        // チェックイン選択を分かりやすく通知
+        showToast(`チェックイン: ${formatJP(ds)}　→ 次にチェックアウト日をクリックしてください`, "info");
+        updateCancelBtn(true);
       } else {
         const lo = selectStart <= ds ? selectStart : ds;
         const hi = selectStart <= ds ? ds : selectStart;
         if (hasBlockedInRange(lo, hi)) {
           showToast("選択した期間に予約済みの日が含まれています。", "error");
-          selectStart = null; selectEnd = null; renderCalendars(); return;
+          selectStart = null; selectEnd = null; renderCalendars();
+          updateCancelBtn(false); return;
         }
         selectStart = lo; selectEnd = hi;
+        updateCancelBtn(false);
         renderCalendars();
         openModal();
       }
@@ -249,7 +250,13 @@
       document.getElementById("modal").classList.add("hidden");
       document.getElementById("booking-form").reset();
       selectStart = null; selectEnd = null;
+      updateCancelBtn(false);
       renderCalendars();
+    }
+
+    function updateCancelBtn(show) {
+      const btn = document.getElementById("cancel-selection-btn");
+      if (btn) btn.style.display = show ? "inline-block" : "none";
     }
 
     function formatJP(str) {
@@ -286,26 +293,38 @@
       };
 
       try {
+        // ① Firebase に保存（必ず成功させる）
         const newRef = push(ref(db, "bookings"));
         await set(newRef, data);
 
-        await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
-          to_email:    email,
-          owner_email: OWNER_EMAIL,
-          guest_name:  name,
-          start_date:  formatJP(selectStart),
-          end_date:    formatJP(selectEnd),
-          type:        isDayVisit ? "日帰り訪問" : `${data.nights}泊${data.nights+1}日の宿泊`,
-          guests:      guests,
-          notes:       notes || "なし",
-          booking_id:  newRef.key
-        }, EMAILJS_PUBLIC_KEY);
+        // ② メール送信（失敗しても予約は確定扱い）
+        let emailOk = false;
+        try {
+          await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+            to_email:    email,
+            owner_email: OWNER_EMAIL,
+            guest_name:  name,
+            start_date:  formatJP(selectStart),
+            end_date:    formatJP(selectEnd),
+            type:        isDayVisit ? "日帰り訪問" : `${data.nights}泊${data.nights+1}日の宿泊`,
+            guests:      guests,
+            notes:       notes || "なし",
+            booking_id:  newRef.key
+          }, EMAILJS_PUBLIC_KEY);
+          emailOk = true;
+        } catch (mailErr) {
+          console.warn("EmailJS error:", mailErr);
+        }
 
         closeModal();
-        showToast(`予約が完了しました！確認メールを ${email} へ送りました。`, "success");
+        if (emailOk) {
+          showToast(`予約が完了しました！確認メールを ${email} へ送りました。`, "success");
+        } else {
+          showToast(`予約は保存されました。※確認メールの送信に失敗しました。管理者にご連絡ください。`, "warn");
+        }
       } catch (err) {
         console.error(err);
-        showToast("エラーが発生しました。もう一度お試しください。", "error");
+        showToast("予約の保存に失敗しました。もう一度お試しください。", "error");
         btn.disabled=false; btn.textContent="予約を確定する";
       }
     }
@@ -325,6 +344,11 @@
       document.getElementById("booking-form").addEventListener("submit", submitBooking);
       document.getElementById("modal-close").addEventListener("click", closeModal);
       document.getElementById("modal-overlay").addEventListener("click", closeModal);
+      document.getElementById("cancel-selection-btn").addEventListener("click", () => {
+        selectStart = null; selectEnd = null; hoveredDate = null;
+        updateCancelBtn(false);
+        renderCalendars();
+      });
 
       // 宿泊 / 日帰り トグル
       document.querySelectorAll(".mode-btn").forEach(btn => {
@@ -340,9 +364,31 @@
         });
       });
 
-      document.getElementById("calendars").addEventListener("mouseleave", () => {
-        hoveredDate = null;
-        if (selectStart && !selectEnd && !isDayVisit) renderCalendars();
+      // ★ イベントデリゲーション：#calendars コンテナで一括受け取り
+      //   個々のセルはDOMが再構築されても、コンテナは常に存在するので確実に動く
+      const calContainer = document.getElementById("calendars");
+
+      calContainer.addEventListener("click", (e) => {
+        const cell = e.target.closest('.cal-cell');
+        if (!cell || cell.classList.contains('booked') || cell.classList.contains('empty')) return;
+        handleCellClick(cell.dataset.date);
+      });
+
+      calContainer.addEventListener("mouseover", (e) => {
+        const cell = e.target.closest('.cal-cell');
+        const ds = cell?.dataset?.date;
+        if (!ds || cell.classList.contains('booked') || cell.classList.contains('empty')) return;
+        if (ds !== hoveredDate) {
+          hoveredDate = ds;
+          if (selectStart && !selectEnd && !isDayVisit) renderCalendars();
+        }
+      });
+
+      calContainer.addEventListener("mouseleave", () => {
+        if (hoveredDate !== null) {
+          hoveredDate = null;
+          if (selectStart && !selectEnd && !isDayVisit) renderCalendars();
+        }
       });
     });
   </script>
@@ -520,6 +566,18 @@
     .toast.show    { opacity: 1; }
     .toast.success { background: #2d6a4f; }
     .toast.error   { background: #e63946; }
+    .toast.warn    { background: #b45309; }
+    .toast.info    { background: #1d4ed8; }
+
+    #cancel-selection-btn {
+      display: none;
+      margin-left: 12px;
+      padding: 5px 14px;
+      background: #fff; color: #e63946;
+      border: 1.5px solid #e63946; border-radius: 6px;
+      font-size: .82rem; cursor: pointer; font-family: inherit;
+    }
+    #cancel-selection-btn:hover { background: #fee2e2; }
 
     footer { text-align: center; padding: 18px; font-size: .76rem; color: #bbb; }
   </style>
@@ -545,9 +603,12 @@
     <button class="mode-btn" data-mode="day">🚗 日帰り訪問</button>
   </div>
 
-  <p class="guide" id="guide-text">
-    チェックイン日をクリック → チェックアウト日をクリックして日程を選んでください
-  </p>
+  <div style="text-align:center; padding: 10px 16px 2px; display:flex; align-items:center; justify-content:center; gap:4px; flex-wrap:wrap;">
+    <p class="guide" id="guide-text" style="padding:0;">
+      チェックイン日をクリック → チェックアウト日をクリックして日程を選んでください
+    </p>
+    <button id="cancel-selection-btn">✕ 選択をキャンセル</button>
+  </div>
 
   <div class="legend">
     <div class="legend-item">
