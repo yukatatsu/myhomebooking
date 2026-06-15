@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ゆか家 · ご予約</title>
+  <title>予約ページ｜TANAKA's Cozy Beachside Home</title>
 
   <!-- EmailJS -->
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
@@ -707,7 +707,7 @@
 
   <!-- ===== NAVBAR ===== -->
   <nav>
-    <span class="nav-logo">TANAKA's Cozy Beach Home</span>
+    <span class="nav-logo">TANAKA's Cozy Beachside Home</span>
     <div class="nav-auth">
       <span id="user-info" style="display:none"></span>
       <button id="auth-btn">Googleでログイン</button>
@@ -719,14 +719,14 @@
     <div class="photo-grid">
       <!-- メイン写真（大） -->
       <div class="photo-main">
-        <img src="images/photo1.jpg" alt="ウッドデッキ・BBQスペース">
+        <img src="images/photo1.jpg" alt="ウッドデッキ・BBQスペース" fetchpriority="high">
       </div>
       <!-- サブ写真（2×2） -->
       <div class="photo-side">
-        <img src="images/photo2.jpg" alt="リビング">
-        <img src="images/photo3.jpg" alt="外観">
-        <img src="images/photo4.jpg" alt="近くの海・サンセット">
-        <img src="images/photo5.jpg" alt="近くのビーチ">
+        <img src="images/photo2.jpg" alt="リビング" loading="lazy" decoding="async">
+        <img src="images/photo3.jpg" alt="外観" loading="lazy" decoding="async">
+        <img src="images/photo4.jpg" alt="近くの海・サンセット" loading="lazy" decoding="async">
+        <img src="images/photo5.jpg" alt="近くのビーチ" loading="lazy" decoding="async">
       </div>
       <!-- すべての写真ボタン -->
       <div class="photos-btn-wrap">
