@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ご宿泊予約</title>
+
+  <!-- EmailJS -->
+  <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+
+  <script type="module">
+    import { initializeApp }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getDatabase, ref, set, push, onValue }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+    import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+    // =============================================
+    // ★ 設定（Firebase・EmailJS の値を入れてください）
+    // =============================================
+
+    const firebaseConfig = {
+  apiKey: "AIzaSyBp7jWNAvdT20k-q_MyzaT4MDKFMqdsj6M",
+  authDomain: "mybookingsystem-6882c.firebaseapp.com",
+  databaseURL: "https://mybookingsystem-6882c-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "mybookingsystem-6882c",
+  storageBucket: "mybookingsystem-6882c.firebasestorage.app",
+  messagingSenderId: "565510902581",
+  appId: "1:565510902581:web:e5a9a238028a1b0dc7727c"
+};
+
+    const EMAILJS_SERVICE_ID  = "service_0e0jd8v";
+    const EMAILJS_TEMPLATE_ID = "itgqkjh";
+    const EMAILJS_PUBLIC_KEY  = "aUk62Y6jyfXBt4Qxw";
+    const OWNER_EMAIL         = "yukgatatsu.tasutasu@gmail.com";
+    // =============================================
+
+    const app      = initializeApp(firebaseConfig);
+    const db       = getDatabase(app);
+    const auth     = getAuth(app);
+    const provider = new GoogleAuthProvider();
+
+    // ---- 状態 ----
+    let bookedRanges = [];   // [{start, end, type}]
+    let selectStart  = null;
+    let selectEnd    = null;
+    let hoveredDate  = null;
+    let currentUser  = null; // Firebase Auth ユーザー
+    let isDayVisit   = false; // false=宿泊, true=日帰り
+
+    const MONTHS = [
+      {year:2026,month:8},{year:2026,month:9},{year:2026,month:10},
+      {year:2026,month:11},{year:2026,month:12},{year:2027,month:1},{year:2027,month:2}
+    ];
+    const JP_WD = ["日","月","火","水","木","金","土"];
+    const JP_MO = ["1月","2月","3月","4月","5月","6月","7月","8月","9月","10月","11月","12月"];
+
+    // ---- Firebase: 予約データ監視 ----
+    function loadBookings() {
+      onValue(ref(db, "bookings"), (snap) => {
+        bookedRanges = [];
+        snap.forEach((child) => {
+          const d = child.val();
+          if (d.status !== "cancelled") {
+            bookedRanges.push({ start: d.startDate, end: d.endDate, type: d.type || "stay" });
+          }
+        });
+        renderCalendars();
+      });
+    }
+
+    // ---- Google ログイン ----
+    async function handleSignIn() {
+      try {
+        await signInWithPopup(auth, provider);
+      } catch (e) { console.error(e); }
+    }
+    async function handleSignOut() {
+      await signOut(auth);
+    }
+
+    onAuthStateChanged(auth, (user) => {
+      currentUser = user;
+      const btn    = document.getElementById("auth-btn");
+      const info   = document.getElementById("user-info");
+      if (user) {
+        btn.textContent   = "ログアウト";
+        btn.onclick       = handleSignOut;
+        info.textContent  = `${user.displayName} さん`;
+        info.style.display = "inline";
+      } else {
+        btn.textContent   = "Googleでログイン";
+        btn.onclick       = handleSignIn;
+        info.style.display = "none";
+      }
+    });
+
+    // ---- 日付ユーティリティ ----
+    function toDateStr(y, m, d) {
+      return `${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+    }
+    function addDays(dateStr, n) {
+      const d = new Date(dateStr);
+      d.setDate(d.getDate() + n);
+      return d.toISOString().slice(0,10);
+    }
+
+    // チェックアウト当日も × → end を含む & endの翌日もブロック
+    function isBlocked(dateStr) {
+      return bookedRanges.some(r => {
+        const bufferEnd = addDays(r.end, 1); // チェックアウト翌日までブロック
+        return dateStr >= r.start && dateStr <= bufferEnd;
+      });
+    }
+
+    function isInSelectionRange(dateStr) {
+      if (!selectStart) return false;
+      const end = selectEnd || hoveredDate;
+      if (!end) return false;
+      const lo = selectStart <= end ? selectStart : end;
+      const hi = selectStart <= end ? end : selectStart;
+      return dateStr > lo && dateStr < hi;
+    }
+
+    function hasBlockedInRange(start, end) {
+      const lo = start <= end ? start : end;
+      const hi = start <= end ? end : start;
+      // 各予約の start〜end+1 と重なるか
+      return bookedRanges.some(r => {
+        const bufferEnd = addDays(r.end, 1);
+        return r.start <= hi && bufferEnd >= lo;
+      });
+    }
+
+    // ---- カレンダー描画 ----
+    function renderCalendars() {
+      const container = document.getElementById("calendars");
+      container.innerHTML = "";
+      MONTHS.forEach(({ year, month }) => container.appendChild(buildMonthEl(year, month)));
+    }
+
+    function buildMonthEl(year, month) {
+      const wrap = document.createElement("div");
+      wrap.className = "month-block";
+      const title = document.createElement("h3");
+      title.textContent = `${year}年 ${JP_MO[month-1]}`;
+      wrap.appendChild(title);
+
+      const grid = document.createElement("div");
+      grid.className = "cal-grid";
+      JP_WD.forEach((w,i) => {
+        const h = document.createElement("div");
+        h.className = "cal-header" + (i===0?" sun":i===6?" sat":"");
+        h.textContent = w;
+        grid.appendChild(h);
+      });
+
+      const firstDay = new Date(year, month-1, 1).getDay();
+      for (let i=0; i<firstDay; i++) {
+        const b = document.createElement("div");
+        b.className = "cal-cell empty";
+        grid.appendChild(b);
+      }
+
+      const daysInMonth = new Date(year, month, 0).getDate();
+      for (let d=1; d<=daysInMonth; d++) {
+        const ds      = toDateStr(year, month, d);
+        const wd      = new Date(year, month-1, d).getDay();
+        const blocked = isBlocked(ds);
+        const inRange = isInSelectionRange(ds);
+        const isEdge  = ds === selectStart || ds === (selectEnd || hoveredDate);
+
+        const cell = document.createElement("div");
+        let cls = "cal-cell";
+        if (blocked)      cls += " booked";
+        else if (isEdge)  cls += " selected-edge";
+        else if (inRange) cls += " in-range";
+        else              cls += " available";
+        if (wd===0) cls += " sun";
+        if (wd===6) cls += " sat";
+        cell.className   = cls;
+        cell.dataset.date = ds;
+
+        const num  = document.createElement("span");
+        num.className   = "day-num";
+        num.textContent = d;
+        const mark = document.createElement("span");
+        mark.className   = "day-mark";
+        mark.textContent = blocked ? "×" : "○";
+        cell.appendChild(num);
+        cell.appendChild(mark);
+
+        if (!blocked) {
+          cell.addEventListener("click",      () => handleCellClick(ds));
+          cell.addEventListener("mouseenter", () => { hoveredDate=ds; if(selectStart&&!selectEnd&&!isDayVisit) renderCalendars(); });
+        }
+        grid.appendChild(cell);
+      }
+
+      wrap.appendChild(grid);
+      return wrap;
+    }
+
+    function handleCellClick(ds) {
+      if (isDayVisit) {
+        // 日帰りモード: 1クリックで確定
+        selectStart = ds;
+        selectEnd   = ds;
+        renderCalendars();
+        openModal();
+        return;
+      }
+      // 宿泊モード
+      if (!selectStart || selectEnd) {
+        selectStart = ds; selectEnd = null; hoveredDate = null;
+        renderCalendars();
+      } else {
+        const lo = selectStart <= ds ? selectStart : ds;
+        const hi = selectStart <= ds ? ds : selectStart;
+        if (hasBlockedInRange(lo, hi)) {
+          showToast("選択した期間に予約済みの日が含まれています。", "error");
+          selectStart = null; selectEnd = null; renderCalendars(); return;
+        }
+        selectStart = lo; selectEnd = hi;
+        renderCalendars();
+        openModal();
+      }
+    }
+
+    // ---- モーダル ----
+    function openModal() {
+      const nights = calcNights(selectStart, selectEnd);
+      document.getElementById("modal-start").textContent  = formatJP(selectStart);
+      document.getElementById("modal-end").textContent    = formatJP(selectEnd);
+      document.getElementById("modal-nights").textContent =
+        isDayVisit ? "（日帰り）" : `（${nights}泊${nights+1}日）`;
+
+      // Google ログイン済みなら自動入力
+      if (currentUser) {
+        document.getElementById("f-name").value  = currentUser.displayName || "";
+        document.getElementById("f-email").value = currentUser.email || "";
+      }
+
+      document.getElementById("modal").classList.remove("hidden");
+    }
+
+    function closeModal() {
+      document.getElementById("modal").classList.add("hidden");
+      document.getElementById("booking-form").reset();
+      selectStart = null; selectEnd = null;
+      renderCalendars();
+    }
+
+    function formatJP(str) {
+      const [y,m,d] = str.split("-");
+      return `${y}年${parseInt(m)}月${parseInt(d)}日`;
+    }
+    function calcNights(s, e) {
+      return Math.round((new Date(e) - new Date(s)) / 86400000);
+    }
+
+    // ---- 予約送信 ----
+    async function submitBooking(ev) {
+      ev.preventDefault();
+      const btn = document.getElementById("submit-btn");
+      btn.disabled = true; btn.textContent = "送信中...";
+
+      const name   = document.getElementById("f-name").value.trim();
+      const email  = document.getElementById("f-email").value.trim();
+      const guests = document.getElementById("f-guests").value;
+      const notes  = document.getElementById("f-notes").value.trim();
+
+      if (hasBlockedInRange(selectStart, selectEnd)) {
+        showToast("この期間は既に予約が入りました。別の日程を選んでください。", "error");
+        closeModal(); btn.disabled=false; btn.textContent="予約を確定する"; return;
+      }
+
+      const data = {
+        name, email, guests: parseInt(guests), notes,
+        startDate: selectStart, endDate: selectEnd,
+        nights: calcNights(selectStart, selectEnd),
+        type: isDayVisit ? "dayvisit" : "stay",
+        bookedAt: new Date().toISOString(),
+        status: "confirmed"
+      };
+
+      try {
+        const newRef = push(ref(db, "bookings"));
+        await set(newRef, data);
+
+        await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+          to_email:    email,
+          owner_email: OWNER_EMAIL,
+          guest_name:  name,
+          start_date:  formatJP(selectStart),
+          end_date:    formatJP(selectEnd),
+          type:        isDayVisit ? "日帰り訪問" : `${data.nights}泊${data.nights+1}日の宿泊`,
+          guests:      guests,
+          notes:       notes || "なし",
+          booking_id:  newRef.key
+        }, EMAILJS_PUBLIC_KEY);
+
+        closeModal();
+        showToast(`予約が完了しました！確認メールを ${email} へ送りました。`, "success");
+      } catch (err) {
+        console.error(err);
+        showToast("エラーが発生しました。もう一度お試しください。", "error");
+        btn.disabled=false; btn.textContent="予約を確定する";
+      }
+    }
+
+    // ---- トースト ----
+    function showToast(msg, type) {
+      const t = document.getElementById("toast");
+      t.textContent = msg; t.className = `toast show ${type}`;
+      setTimeout(() => t.className="toast", 4500);
+    }
+
+    // ---- 初期化 ----
+    window.addEventListener("DOMContentLoaded", () => {
+      emailjs.init(EMAILJS_PUBLIC_KEY);
+      loadBookings();
+
+      document.getElementById("booking-form").addEventListener("submit", submitBooking);
+      document.getElementById("modal-close").addEventListener("click", closeModal);
+      document.getElementById("modal-overlay").addEventListener("click", closeModal);
+
+      // 宿泊 / 日帰り トグル
+      document.querySelectorAll(".mode-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          isDayVisit = btn.dataset.mode === "day";
+          document.querySelectorAll(".mode-btn").forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+          selectStart = null; selectEnd = null;
+          renderCalendars();
+          document.getElementById("guide-text").textContent = isDayVisit
+            ? "日帰り訪問したい日を1日クリックするだけで予約できます"
+            : "チェックイン日をクリック → チェックアウト日をクリックして日程を選んでください";
+        });
+      });
+
+      document.getElementById("calendars").addEventListener("mouseleave", () => {
+        hoveredDate = null;
+        if (selectStart && !selectEnd && !isDayVisit) renderCalendars();
+      });
+    });
+  </script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+      background: #f5f7fa; color: #333; min-height: 100vh;
+    }
+
+    /* ---- ヘッダー ---- */
+    header {
+      background: linear-gradient(135deg, #2d6a4f, #40916c);
+      color: #fff; padding: 24px 20px 20px;
+    }
+    .header-top {
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 10px;
+    }
+    header h1 { font-size: 1.4rem; letter-spacing: .04em; }
+    header p  { margin-top: 4px; opacity: .8; font-size: .85rem; }
+
+    .auth-area { display: flex; align-items: center; gap: 10px; }
+    #user-info {
+      font-size: .82rem; background: rgba(255,255,255,.2);
+      padding: 4px 10px; border-radius: 12px;
+    }
+    #auth-btn {
+      padding: 7px 16px; border: 2px solid rgba(255,255,255,.7);
+      background: transparent; color: #fff; border-radius: 8px;
+      font-size: .82rem; cursor: pointer; transition: background .2s;
+      font-family: inherit;
+    }
+    #auth-btn:hover { background: rgba(255,255,255,.2); }
+
+    /* ---- モードトグル ---- */
+    .mode-toggle {
+      display: flex; justify-content: center; gap: 0;
+      padding: 16px 0 4px;
+    }
+    .mode-btn {
+      padding: 9px 28px; border: 2px solid #2d6a4f;
+      background: #fff; color: #2d6a4f;
+      font-size: .9rem; cursor: pointer; font-family: inherit;
+      transition: all .2s;
+    }
+    .mode-btn:first-child { border-radius: 8px 0 0 8px; }
+    .mode-btn:last-child  { border-radius: 0 8px 8px 0; border-left: none; }
+    .mode-btn.active { background: #2d6a4f; color: #fff; }
+
+    /* ---- ガイド ---- */
+    .guide {
+      text-align: center; padding: 10px 16px 2px;
+      color: #666; font-size: .85rem;
+    }
+
+    /* ---- 凡例 ---- */
+    .legend {
+      display: flex; gap: 18px; justify-content: center;
+      padding: 8px 0 14px; font-size: .82rem; flex-wrap: wrap;
+    }
+    .legend-item { display: flex; align-items: center; gap: 5px; }
+    .legend-dot {
+      width: 22px; height: 22px; border-radius: 5px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: .75rem; font-weight: 700;
+    }
+    .legend-dot.avail  { background: #d8f3dc; color: #2d6a4f; }
+    .legend-dot.booked { background: #fee2e2; color: #e63946; }
+
+    /* ---- カレンダー ---- */
+    #calendars {
+      display: flex; flex-wrap: wrap; gap: 20px;
+      justify-content: center; padding: 8px 16px 40px;
+    }
+    .month-block {
+      background: #fff; border-radius: 12px;
+      box-shadow: 0 2px 10px rgba(0,0,0,.07);
+      padding: 14px; min-width: 272px;
+    }
+    .month-block h3 {
+      text-align: center; font-size: .95rem;
+      margin-bottom: 8px; color: #2d6a4f;
+    }
+    .cal-grid {
+      display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px;
+    }
+    .cal-header {
+      text-align: center; font-size: .7rem; font-weight: 700;
+      color: #777; padding: 3px 0;
+    }
+    .cal-header.sun { color: #e63946; }
+    .cal-header.sat { color: #457b9d; }
+
+    .cal-cell {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; border-radius: 6px;
+      padding: 4px 2px; min-height: 44px;
+      font-size: .75rem; line-height: 1.2; transition: background .12s;
+    }
+    .cal-cell.empty { background: transparent; }
+    .day-num  { font-size: .68rem; color: #aaa; }
+    .day-mark { font-size: .95rem; font-weight: 700; }
+
+    .cal-cell.available      { cursor: pointer; }
+    .cal-cell.available:hover { background: #d8f3dc; }
+    .cal-cell.available .day-mark { color: #2d6a4f; }
+    .cal-cell.booked         { background: #fee2e2; cursor: not-allowed; }
+    .cal-cell.booked .day-mark { color: #e63946; }
+    .cal-cell.in-range        { background: #b7e4c7; cursor: pointer; }
+    .cal-cell.in-range .day-mark { color: #1b4332; }
+    .cal-cell.selected-edge   { background: #2d6a4f; cursor: pointer; }
+    .cal-cell.selected-edge .day-num,
+    .cal-cell.selected-edge .day-mark { color: #fff !important; }
+
+    .cal-cell.sun .day-num { color: #e63946; }
+    .cal-cell.sat .day-num { color: #457b9d; }
+
+    /* ---- モーダル ---- */
+    #modal.hidden { display: none; }
+    #modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,.45);
+      z-index: 100; display: flex; align-items: center; justify-content: center;
+    }
+    .modal-box {
+      background: #fff; border-radius: 14px;
+      padding: 26px 22px 22px; width: min(460px, 94vw);
+      position: relative; z-index: 101;
+    }
+    .modal-box h2 { font-size: 1.05rem; color: #2d6a4f; margin-bottom: 4px; }
+    .modal-box .dates-summary { font-size: .85rem; color: #555; margin-bottom: 18px; }
+    #modal-close {
+      position: absolute; top: 12px; right: 14px;
+      background: none; border: none; font-size: 1.3rem; cursor: pointer; color: #bbb;
+    }
+    #modal-close:hover { color: #555; }
+
+    .google-prefill-note {
+      background: #f0fdf4; border: 1px solid #bbf7d0;
+      border-radius: 7px; padding: 8px 12px; margin-bottom: 14px;
+      font-size: .8rem; color: #166534;
+    }
+    .form-group        { margin-bottom: 12px; }
+    .form-group label  { display: block; font-size: .8rem; color: #555; margin-bottom: 3px; }
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+      width: 100%; border: 1px solid #ddd; border-radius: 7px;
+      padding: 8px 10px; font-size: .88rem; font-family: inherit;
+    }
+    .form-group input:focus,
+    .form-group select:focus,
+    .form-group textarea:focus {
+      outline: none; border-color: #40916c;
+      box-shadow: 0 0 0 3px rgba(64,145,108,.12);
+    }
+    .form-group textarea { resize: vertical; min-height: 64px; }
+
+    #submit-btn {
+      width: 100%; padding: 12px; background: #2d6a4f; color: #fff;
+      border: none; border-radius: 8px; font-size: .95rem; font-weight: 700;
+      cursor: pointer; transition: background .2s;
+    }
+    #submit-btn:hover:not(:disabled) { background: #1b4332; }
+    #submit-btn:disabled { opacity: .6; cursor: not-allowed; }
+
+    /* ---- トースト ---- */
+    .toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      background: #333; color: #fff; padding: 11px 20px; border-radius: 8px;
+      font-size: .88rem; opacity: 0; transition: opacity .3s;
+      pointer-events: none; z-index: 200; max-width: 90vw; text-align: center;
+    }
+    .toast.show    { opacity: 1; }
+    .toast.success { background: #2d6a4f; }
+    .toast.error   { background: #e63946; }
+
+    footer { text-align: center; padding: 18px; font-size: .76rem; color: #bbb; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="header-top">
+      <div>
+        <h1>🏠 ご宿泊予約</h1>
+        <p>2026年8月〜2027年2月</p>
+      </div>
+      <div class="auth-area">
+        <span id="user-info" style="display:none"></span>
+        <button id="auth-btn" onclick="">Googleでログイン</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 宿泊 / 日帰り トグル -->
+  <div class="mode-toggle">
+    <button class="mode-btn active" data-mode="stay">🛏️ 宿泊予約</button>
+    <button class="mode-btn" data-mode="day">🚗 日帰り訪問</button>
+  </div>
+
+  <p class="guide" id="guide-text">
+    チェックイン日をクリック → チェックアウト日をクリックして日程を選んでください
+  </p>
+
+  <div class="legend">
+    <div class="legend-item">
+      <div class="legend-dot avail">○</div> 空き
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot booked">×</div> 予約済み・バッファ日
+    </div>
+  </div>
+
+  <div id="calendars">
+    <p style="color:#bbb;padding:40px;text-align:center;">カレンダーを読み込み中...</p>
+  </div>
+
+  <!-- 予約モーダル -->
+  <div id="modal" class="hidden">
+    <div id="modal-overlay">
+      <div class="modal-box" onclick="event.stopPropagation()">
+        <button id="modal-close" aria-label="閉じる">✕</button>
+        <h2 id="modal-title">予約内容の入力</h2>
+        <p class="dates-summary">
+          <strong id="modal-start"></strong> 〜 <strong id="modal-end"></strong>
+          <span id="modal-nights"></span>
+        </p>
+        <div class="google-prefill-note" id="prefill-note" style="display:none">
+          ✅ Google アカウントから名前・メールを自動入力しました
+        </div>
+        <form id="booking-form">
+          <div class="form-group">
+            <label for="f-name">お名前 <span style="color:#e63946">*</span></label>
+            <input id="f-name" type="text" required placeholder="山田 太郎">
+          </div>
+          <div class="form-group">
+            <label for="f-email">メールアドレス <span style="color:#e63946">*</span></label>
+            <input id="f-email" type="email" required placeholder="example@email.com">
+          </div>
+          <div class="form-group">
+            <label for="f-guests">人数 <span style="color:#e63946">*</span></label>
+            <select id="f-guests" required>
+              <option value="">選択してください</option>
+              <option value="1">1名</option>
+              <option value="2">2名</option>
+              <option value="3">3名</option>
+              <option value="4">4名</option>
+              <option value="5">5名</option>
+              <option value="6">6名以上</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="f-notes">メモ・連絡事項</label>
+            <textarea id="f-notes" placeholder="到着時間や特記事項があればご記入ください"></textarea>
+          </div>
+          <button type="submit" id="submit-btn">予約を確定する</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    // モーダルを開いたとき、Googleログイン済みなら自動入力バナーを表示
+    const origOpen = window.openModal;
+    document.addEventListener("DOMContentLoaded", () => {
+      // prefill-note の表示制御はモジュール内の openModal で管理
+    });
+  </script>
+
+  <!-- prefill-note の表示制御を module 内に移動済み -->
+  <script type="module">
+    // openModal の補足: ログイン済みのときバナー表示
+    // （module スコープのため直接参照できないので MutationObserver で対応）
+    const observer = new MutationObserver(() => {
+      const modal = document.getElementById("modal");
+      const note  = document.getElementById("prefill-note");
+      const nameVal = document.getElementById("f-name").value;
+      if (!modal.classList.contains("hidden") && nameVal) {
+        note.style.display = "block";
+      } else {
+        note.style.display = "none";
+      }
+    });
+    observer.observe(document.getElementById("modal"), { attributes: true, attributeFilter: ["class"] });
+  </script>
+
+  <footer>© 2026 ご予約フォーム</footer>
+</body>
+</html>

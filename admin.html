@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>管理者ページ</title>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getDatabase, ref, onValue, update, push, set }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+    // ===== ↓ index.html と同じ Firebase 設定を入れてください =====
+
+   const firebaseConfig = {
+  apiKey: "AIzaSyBp7jWNAvdT20k-q_MyzaT4MDKFMqdsj6M",
+  authDomain: "mybookingsystem-6882c.firebaseapp.com",
+  databaseURL: "https://mybookingsystem-6882c-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "mybookingsystem-6882c",
+  storageBucket: "mybookingsystem-6882c.firebasestorage.app",
+  messagingSenderId: "565510902581",
+  appId: "1:565510902581:web:e5a9a238028a1b0dc7727c"
+};
+
+    // ===== ↓ 管理者パスワードを設定してください =====
+    const ADMIN_PASSWORD = "うんじゃらうんじゃら";
+
+    const app = initializeApp(firebaseConfig);
+    const db  = getDatabase(app);
+
+    let allBookings = {};
+
+    function checkPassword() {
+      const input = document.getElementById("pw-input").value;
+      if (input === ADMIN_PASSWORD) {
+        document.getElementById("login-screen").classList.add("hidden");
+        document.getElementById("admin-screen").classList.remove("hidden");
+        loadBookings();
+      } else {
+        document.getElementById("pw-error").textContent = "パスワードが違います";
+      }
+    }
+
+    function loadBookings() {
+      const bookingsRef = ref(db, "bookings");
+      onValue(bookingsRef, (snapshot) => {
+        allBookings = {};
+        snapshot.forEach((child) => {
+          allBookings[child.key] = child.val();
+        });
+        renderTable(document.getElementById("filter-status").value);
+      });
+    }
+
+    function renderTable(filterStatus) {
+      const tbody   = document.getElementById("bookings-tbody");
+      const summary = document.getElementById("summary");
+      tbody.innerHTML = "";
+
+      const sorted = Object.entries(allBookings)
+        .sort((a, b) => a[1].startDate.localeCompare(b[1].startDate));
+
+      const filtered = filterStatus === "all"
+        ? sorted
+        : sorted.filter(([, d]) => d.status === filterStatus);
+
+      // サマリー
+      const confirmedCount = sorted.filter(([, d]) => d.status === "confirmed" && d.type !== "block").length;
+      const cancelledCount = sorted.filter(([, d]) => d.status === "cancelled").length;
+      const blockCount     = sorted.filter(([, d]) => d.type === "block" && d.status === "confirmed").length;
+      summary.textContent = `予約確定: ${confirmedCount}件　キャンセル: ${cancelledCount}件　ブロック中: ${blockCount}件`;
+
+      if (filtered.length === 0) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td colspan="8" style="text-align:center;color:#aaa;padding:30px;">予約がありません</td>`;
+        tbody.appendChild(tr);
+        return;
+      }
+
+      filtered.forEach(([key, d]) => {
+        const tr = document.createElement("tr");
+        tr.className = d.status === "cancelled" ? "cancelled-row" : "";
+
+        const nights   = calcNights(d.startDate, d.endDate);
+        const bookedAt = new Date(d.bookedAt).toLocaleString("ja-JP");
+
+        // ---- オーナーブロック行 ----
+        if (d.type === "block") {
+          const isActive = d.status === "confirmed";
+          tr.innerHTML = `
+            <td>${formatDateJP(d.startDate)}</td>
+            <td>${d.startDate === d.endDate ? "—" : formatDateJP(d.endDate)}</td>
+            <td>${d.startDate === d.endDate ? "1日" : nights + "泊分"}</td>
+            <td colspan="4" style="color:#6b7280;font-style:italic;">
+              🔒 オーナーブロック${d.notes ? `：${escHtml(d.notes)}` : ""}
+            </td>
+            <td><span class="badge ${isActive ? "block-active" : "cancelled"}">
+              ${isActive ? "ブロック中" : "解除済み"}
+            </span></td>
+            <td>${bookedAt}</td>
+            <td>
+              ${isActive
+                ? `<button class="btn-unblock" data-key="${key}">解除</button>`
+                : `<button class="btn-restore" data-key="${key}">再ブロック</button>`}
+            </td>
+          `;
+          tbody.appendChild(tr);
+          return;
+        }
+
+        // ---- 通常予約行 ----
+        const statusBadge = d.status === "confirmed"
+          ? `<span class="badge confirmed">確定</span>`
+          : `<span class="badge cancelled">キャンセル</span>`;
+        const typeBadge = d.type === "dayvisit"
+          ? `<span class="badge dayvisit">日帰り</span>`
+          : `<span class="badge staytype">宿泊</span>`;
+
+        tr.innerHTML = `
+          <td>${formatDateJP(d.startDate)}</td>
+          <td>${d.type === "dayvisit" ? "—" : formatDateJP(d.endDate)}</td>
+          <td>${d.type === "dayvisit" ? "日帰り" : nights + "泊"}</td>
+          <td>${escHtml(d.name)}</td>
+          <td><a href="mailto:${escHtml(d.email)}">${escHtml(d.email)}</a></td>
+          <td>${d.guests}名</td>
+          <td class="notes-cell">${escHtml(d.notes || "—")}</td>
+          <td>${typeBadge} ${statusBadge}</td>
+          <td>${bookedAt}</td>
+          <td>
+            ${d.status === "confirmed"
+              ? `<button class="btn-cancel" data-key="${key}">キャンセル</button>`
+              : `<button class="btn-restore" data-key="${key}">復元</button>`}
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      // イベントバインド
+      tbody.querySelectorAll(".btn-cancel").forEach(btn => {
+        btn.addEventListener("click", () => changeStatus(btn.dataset.key, "cancelled"));
+      });
+      tbody.querySelectorAll(".btn-restore").forEach(btn => {
+        btn.addEventListener("click", () => changeStatus(btn.dataset.key, "confirmed"));
+      });
+      tbody.querySelectorAll(".btn-unblock").forEach(btn => {
+        btn.addEventListener("click", () => changeStatus(btn.dataset.key, "cancelled"));
+      });
+    }
+
+    async function changeStatus(key, newStatus) {
+      await update(ref(db, `bookings/${key}`), { status: newStatus });
+    }
+
+    async function addBlock() {
+      const startInput = document.getElementById("block-start").value;
+      const endInput   = document.getElementById("block-end").value   || startInput;
+      const notes      = document.getElementById("block-notes").value.trim();
+
+      if (!startInput) { alert("開始日を入力してください"); return; }
+      if (endInput < startInput) { alert("終了日は開始日以降を選んでください"); return; }
+
+      const btn = document.getElementById("block-btn");
+      btn.disabled = true; btn.textContent = "保存中...";
+      try {
+        await set(push(ref(db, "bookings")), {
+          type: "block", name: "オーナーブロック", email: "", guests: 0,
+          startDate: startInput, endDate: endInput, notes,
+          bookedAt: new Date().toISOString(), status: "confirmed"
+        });
+        document.getElementById("block-start").value = "";
+        document.getElementById("block-end").value   = "";
+        document.getElementById("block-notes").value = "";
+      } catch(e) { alert("エラーが発生しました"); console.error(e); }
+      btn.disabled = false; btn.textContent = "× ブロックする";
+    }
+
+    function calcNights(start, end) {
+      return Math.round((new Date(end) - new Date(start)) / 86400000);
+    }
+
+    function formatDateJP(str) {
+      const [y, m, d] = str.split("-");
+      return `${y}年${parseInt(m)}月${parseInt(d)}日`;
+    }
+
+    function escHtml(str) {
+      return String(str)
+        .replace(/&/g,"&amp;")
+        .replace(/</g,"&lt;")
+        .replace(/>/g,"&gt;")
+        .replace(/"/g,"&quot;");
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      document.getElementById("pw-submit").addEventListener("click", checkPassword);
+      document.getElementById("pw-input").addEventListener("keydown", e => {
+        if (e.key === "Enter") checkPassword();
+      });
+      document.getElementById("filter-status").addEventListener("change", e => {
+        renderTable(e.target.value);
+      });
+      document.getElementById("export-btn").addEventListener("click", exportCSV);
+      document.getElementById("block-btn").addEventListener("click", addBlock);
+    });
+
+    function exportCSV() {
+      const rows = [["チェックイン","チェックアウト","泊数","お名前","メール","人数","メモ","ステータス","予約日時"]];
+      Object.values(allBookings)
+        .sort((a,b) => a.startDate.localeCompare(b.startDate))
+        .forEach(d => {
+          rows.push([
+            d.startDate, d.endDate,
+            calcNights(d.startDate, d.endDate),
+            d.name, d.email, d.guests,
+            d.notes || "",
+            d.status === "confirmed" ? "確定" : "キャンセル",
+            new Date(d.bookedAt).toLocaleString("ja-JP")
+          ]);
+        });
+      const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
+      const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "予約一覧.csv";
+      a.click();
+    }
+  </script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+      background: #f5f7fa; color: #333; min-height: 100vh;
+    }
+
+    /* ---- ログイン ---- */
+    #login-screen {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; min-height: 100vh; gap: 16px;
+    }
+    #login-screen h1 { font-size: 1.3rem; color: #2d6a4f; }
+    #pw-input {
+      padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px;
+      font-size: 1rem; width: 260px;
+    }
+    #pw-input:focus { outline: none; border-color: #40916c; }
+    #pw-submit {
+      padding: 10px 28px; background: #2d6a4f; color: #fff;
+      border: none; border-radius: 8px; font-size: 1rem;
+      cursor: pointer;
+    }
+    #pw-error { color: #e63946; font-size: .85rem; }
+
+    /* ---- 管理画面 ---- */
+    #admin-screen.hidden, #login-screen.hidden { display: none !important; }
+
+    header {
+      background: linear-gradient(135deg, #1b4332, #2d6a4f);
+      color: #fff; padding: 18px 24px;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 10px;
+    }
+    header h1 { font-size: 1.1rem; }
+
+    .toolbar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 14px 20px; flex-wrap: wrap;
+    }
+    .toolbar label { font-size: .85rem; color: #555; }
+    #filter-status {
+      padding: 7px 10px; border: 1px solid #ddd; border-radius: 7px;
+      font-size: .9rem;
+    }
+    #summary { font-size: .88rem; color: #666; }
+    #export-btn {
+      margin-left: auto;
+      padding: 7px 16px; background: #457b9d; color: #fff;
+      border: none; border-radius: 7px; font-size: .85rem; cursor: pointer;
+    }
+    #export-btn:hover { background: #1d3557; }
+
+    .table-wrapper { overflow-x: auto; padding: 0 16px 40px; }
+
+    table {
+      width: 100%; border-collapse: collapse;
+      background: #fff; border-radius: 10px;
+      overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,.08);
+      font-size: .85rem;
+    }
+    th {
+      background: #2d6a4f; color: #fff;
+      padding: 10px 12px; text-align: left;
+      white-space: nowrap;
+    }
+    td {
+      padding: 10px 12px; border-bottom: 1px solid #f0f0f0;
+      vertical-align: top;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f9fafb; }
+    tr.cancelled-row td { opacity: .55; }
+
+    .notes-cell { max-width: 180px; word-break: break-word; }
+
+    a { color: #2d6a4f; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .badge {
+      display: inline-block; padding: 3px 9px;
+      border-radius: 12px; font-size: .78rem; font-weight: 700;
+    }
+    .badge.confirmed { background: #d8f3dc; color: #1b4332; }
+    .badge.cancelled { background: #fee2e2; color: #9b2335; }
+    .badge.dayvisit  { background: #dbeafe; color: #1e40af; }
+    .badge.staytype  { background: #fef9c3; color: #713f12; }
+
+    .btn-cancel {
+      padding: 4px 10px; background: #fee2e2; color: #9b2335;
+      border: 1px solid #fca5a5; border-radius: 5px;
+      font-size: .78rem; cursor: pointer; white-space: nowrap;
+    }
+    .btn-cancel:hover { background: #fca5a5; }
+
+    .btn-restore {
+      padding: 4px 10px; background: #d8f3dc; color: #1b4332;
+      border: 1px solid #74c69d; border-radius: 5px;
+      font-size: .78rem; cursor: pointer; white-space: nowrap;
+    }
+    .btn-restore:hover { background: #74c69d; }
+
+    .btn-unblock {
+      padding: 4px 10px; background: #f3f4f6; color: #374151;
+      border: 1px solid #d1d5db; border-radius: 5px;
+      font-size: .78rem; cursor: pointer; white-space: nowrap;
+    }
+    .btn-unblock:hover { background: #e5e7eb; }
+
+    .badge.block-active { background: #fef3c7; color: #92400e; }
+
+    /* ---- ブロックパネル ---- */
+    .block-panel {
+      margin: 0 16px 12px; background: #fff;
+      border: 2px dashed #d1d5db; border-radius: 10px;
+      padding: 16px 18px;
+    }
+    .block-panel h2 {
+      font-size: .9rem; color: #374151; margin-bottom: 12px;
+    }
+    .block-form {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end;
+    }
+    .block-form label { font-size: .78rem; color: #666; display: block; margin-bottom: 3px; }
+    .block-form input[type="date"],
+    .block-form input[type="text"] {
+      padding: 7px 10px; border: 1px solid #ddd; border-radius: 7px;
+      font-size: .88rem; font-family: inherit;
+    }
+    .block-form input[type="date"] { width: 150px; }
+    .block-form input[type="text"] { width: 200px; }
+    #block-btn {
+      padding: 8px 18px; background: #374151; color: #fff;
+      border: none; border-radius: 7px; font-size: .88rem;
+      cursor: pointer; white-space: nowrap;
+    }
+    #block-btn:hover:not(:disabled) { background: #1f2937; }
+    #block-btn:disabled { opacity: .6; }
+  </style>
+</head>
+<body>
+
+  <!-- ログイン -->
+  <div id="login-screen">
+    <h1>🔒 管理者ログイン</h1>
+    <input id="pw-input" type="password" placeholder="パスワードを入力">
+    <button id="pw-submit">ログイン</button>
+    <p id="pw-error"></p>
+  </div>
+
+  <!-- 管理画面 -->
+  <div id="admin-screen" class="hidden">
+    <header>
+      <h1>📋 予約管理ページ</h1>
+      <span style="font-size:.85rem;opacity:.8;">2026年8月〜2027年2月</span>
+    </header>
+
+    <!-- ブロックパネル -->
+    <div class="block-panel">
+      <h2>🔒 日程をブロックする（友達に見せたくない・使えない日）</h2>
+      <div class="block-form">
+        <div>
+          <label for="block-start">開始日</label>
+          <input id="block-start" type="date" min="2026-08-01" max="2027-02-28">
+        </div>
+        <div>
+          <label for="block-end">終了日（1日だけなら空欄でOK）</label>
+          <input id="block-end" type="date" min="2026-08-01" max="2027-02-28">
+        </div>
+        <div>
+          <label for="block-notes">メモ（任意）</label>
+          <input id="block-notes" type="text" placeholder="例: 掃除、帰省中">
+        </div>
+        <button id="block-btn">× ブロックする</button>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <label for="filter-status">表示：</label>
+      <select id="filter-status">
+        <option value="all">すべて</option>
+        <option value="confirmed">確定のみ</option>
+        <option value="cancelled">キャンセルのみ</option>
+      </select>
+      <span id="summary"></span>
+      <button id="export-btn">📥 CSV出力</button>
+    </div>
+
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>チェックイン</th>
+            <th>チェックアウト</th>
+            <th>泊数</th>
+            <th>お名前</th>
+            <th>メール</th>
+            <th>人数</th>
+            <th>メモ</th>
+            <th>ステータス</th>
+            <th>予約日時</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="bookings-tbody">
+          <tr><td colspan="10" style="text-align:center;padding:30px;color:#aaa;">読み込み中...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</body>
+</html>
