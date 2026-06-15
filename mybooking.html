@@ -13,6 +13,8 @@
       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import { getDatabase, ref, get, update }
       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+    import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
     // =============================================
     // ★ 設定（index.html と同じ値を入れてください）
@@ -35,8 +37,31 @@
     const SITE_URL                 = "https://yukatatsu.github.io/myhomebooking";
     // =============================================
 
-    const app = initializeApp(firebaseConfig);
-    const db  = getDatabase(app);
+    const app      = initializeApp(firebaseConfig);
+    const db       = getDatabase(app);
+    const auth     = getAuth(app);
+    const provider = new GoogleAuthProvider();
+
+    // ---- Google ログイン ----
+    async function handleSignIn() {
+      try { await signInWithPopup(auth, provider); } catch (e) { console.error(e); }
+    }
+    async function handleSignOut() { await signOut(auth); }
+
+    onAuthStateChanged(auth, (user) => {
+      const btn  = document.getElementById("auth-btn");
+      const info = document.getElementById("user-info");
+      if (user) {
+        btn.textContent    = "ログアウト";
+        btn.onclick        = handleSignOut;
+        info.textContent   = `${user.displayName} さん`;
+        info.style.display = "inline";
+      } else {
+        btn.textContent    = "Googleでログイン";
+        btn.onclick        = handleSignIn;
+        info.style.display = "none";
+      }
+    });
 
     // ---- 状態 ----
     let booking       = null;  // 現在の予約データ
@@ -91,6 +116,8 @@
       if (!snap.exists()) return null;
       return snap.val();
     }
+
+    // ---- ページ初期化は DOMContentLoaded 後に呼ぶ ----
 
     // ---- ページ初期化 ----
     async function init() {
@@ -254,8 +281,8 @@
     function isBlockedForModify(dateStr) {
       return allBookings.some(r => {
         if (r.key === bookingKey) return false; // 自分の予約は除外
-        const bufferEnd = addDays(r.end, 1);
-        return dateStr >= r.start && dateStr <= bufferEnd;
+        const bufferEnd = addDays(r.endDate, 1);
+        return dateStr >= r.startDate && dateStr <= bufferEnd;
       });
     }
 
@@ -273,8 +300,8 @@
       const hi = start <= end ? end : start;
       return allBookings.some(r => {
         if (r.key === bookingKey) return false;
-        const bufferEnd = addDays(r.end, 1);
-        return r.start <= hi && bufferEnd >= lo;
+        const bufferEnd = addDays(r.endDate, 1);
+        return r.startDate <= hi && bufferEnd >= lo;
       });
     }
 
@@ -511,8 +538,24 @@
       background: linear-gradient(135deg, #2d6a4f, #40916c);
       color: #fff; padding: 22px 20px;
     }
+    .header-top {
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 10px;
+    }
     header h1 { font-size: 1.3rem; }
     header p  { margin-top: 4px; opacity: .8; font-size: .83rem; }
+    .auth-area { display: flex; align-items: center; gap: 10px; }
+    #user-info {
+      font-size: .82rem; background: rgba(255,255,255,.2);
+      padding: 4px 10px; border-radius: 12px;
+    }
+    #auth-btn {
+      padding: 7px 16px; border: 2px solid rgba(255,255,255,.7);
+      background: transparent; color: #fff; border-radius: 8px;
+      font-size: .82rem; cursor: pointer; transition: background .2s;
+      font-family: inherit;
+    }
+    #auth-btn:hover { background: rgba(255,255,255,.2); }
 
     main { max-width: 680px; margin: 0 auto; padding: 24px 16px 60px; }
 
@@ -723,8 +766,16 @@
 <body>
 
   <header>
-    <h1>🏠 予約の確認・変更・キャンセル</h1>
-    <p>ご予約内容の確認・日程変更・キャンセルができます</p>
+    <div class="header-top">
+      <div>
+        <h1>🏠 予約の確認・変更・キャンセル</h1>
+        <p>ご予約内容の確認・日程変更・キャンセルができます</p>
+      </div>
+      <div class="auth-area">
+        <span id="user-info" style="display:none"></span>
+        <button id="auth-btn">Googleでログイン</button>
+      </div>
+    </div>
   </header>
 
   <main>
